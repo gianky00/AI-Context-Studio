@@ -89,7 +89,16 @@ echo ═════════════════════════
 echo.
 
 REM Avvia l'applicazione (senza mostrare la console)
-start "" pythonw ai_context_studio.py
+set PYTHONPATH=%~dp0src;%PYTHONPATH%
+
+if not exist "%~dp0src\ai_context_studio\main.py" (
+    echo.
+    echo ❌ ERRORE: File principale non trovato in src\ai_context_studio\main.py
+    pause
+    exit /b 1
+)
+
+start "" pythonw -m ai_context_studio.main
 
 REM Chiudi questa finestra dopo 2 secondi
 timeout /t 2 /nobreak >nul
