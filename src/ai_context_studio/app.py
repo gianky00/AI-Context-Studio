@@ -16,7 +16,7 @@ import customtkinter as ctk
 
 from .api_client import GeminiAPIClient
 from .config import ConfigManager
-from .constants import APP_AUTHOR, APP_NAME, APP_VERSION, COLORS
+from .constants import APP_AUTHOR, APP_NAME, APP_VERSION, COLORS, FONTS, SHORTCUTS
 from .models import GenerationResult
 from .ui.event_queue import UIEventQueue
 from .ui.panels import GuidePanel
@@ -73,27 +73,47 @@ class AIContextStudioApp(ctk.CTk):
         # Cleanup on close
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
+        # Setup keyboard shortcuts
+        self._setup_keyboard_shortcuts()
+
+    def _setup_keyboard_shortcuts(self) -> None:
+        """Setup global keyboard shortcuts."""
+        self.bind(SHORTCUTS['help'], lambda e: self._show_guide())
+        self.bind(SHORTCUTS['cancel'], lambda e: self._on_escape())
+        self.bind(SHORTCUTS['open_folder'], lambda e: self.setup_tab._browse_folder())
+        self.bind(SHORTCUTS['scan'], lambda e: self.setup_tab._start_scan())
+        self.bind(SHORTCUTS['generate_all'], lambda e: self.generator_tab._start_bundle_generation())
+        self.bind(SHORTCUTS['save'], lambda e: self.preview_tab._save_current())
+        self.bind(SHORTCUTS['save_all'], lambda e: self.preview_tab._save_all())
+        self.bind(SHORTCUTS['refresh'], lambda e: self.generator_tab._refresh_models())
+
+    def _on_escape(self) -> None:
+        """Handle Escape key press."""
+        if hasattr(self, 'generator_tab') and self.generator_tab._generating:
+            self.generator_tab._cancel_current_generation()
+
     def _setup_ui(self) -> None:
         """Set up the main UI layout."""
         self._create_header()
         self._create_main_content()
+        self._create_shortcut_bar()
         self._create_footer()
 
     def _create_header(self) -> None:
         """Create the application header."""
-        header = ctk.CTkFrame(self, height=60, fg_color=COLORS['bg_dark'])
+        header = ctk.CTkFrame(self, height=70, fg_color=COLORS['bg_dark'])
         header.pack(fill="x")
         header.pack_propagate(False)
 
         # Logo area
         logo_frame = ctk.CTkFrame(header, fg_color="transparent")
-        logo_frame.pack(side="left", padx=25, pady=10)
+        logo_frame.pack(side="left", padx=25, pady=12)
 
         ctk.CTkLabel(
             logo_frame,
             text="\U0001F9E0",  # Brain emoji
-            font=ctk.CTkFont(size=28)
-        ).pack(side="left", padx=(0, 10))
+            font=ctk.CTkFont(size=32)
+        ).pack(side="left", padx=(0, 12))
 
         title_frame = ctk.CTkFrame(logo_frame, fg_color="transparent")
         title_frame.pack(side="left")
@@ -101,36 +121,37 @@ class AIContextStudioApp(ctk.CTk):
         ctk.CTkLabel(
             title_frame,
             text=APP_NAME,
-            font=ctk.CTkFont(size=20, weight="bold"),
+            font=ctk.CTkFont(size=FONTS['title'], weight="bold"),
             text_color="white"
         ).pack(anchor="w")
 
         ctk.CTkLabel(
             title_frame,
             text="Knowledge Base Generator per AI Agents",
-            font=ctk.CTkFont(size=10),
+            font=ctk.CTkFont(size=FONTS['body_small']),
             text_color="#94a3b8"
         ).pack(anchor="w")
 
         # Help button
         help_btn = ctk.CTkButton(
             header,
-            text="\u2753 Guida",
-            width=80,
-            height=30,
+            text="\u2753 Guida (F1)",
+            width=100,
+            height=34,
+            font=ctk.CTkFont(size=FONTS['body_small']),
             fg_color="transparent",
             hover_color="#1e293b",
             text_color="#94a3b8",
             command=self._show_guide
         )
         help_btn.pack(side="right", padx=10)
-        add_tooltip(help_btn, "Mostra la guida su come usare l'applicazione")
+        add_tooltip(help_btn, "Mostra la guida - Scorciatoia: F1")
 
         # Version info
         ctk.CTkLabel(
             header,
             text=f"v{APP_VERSION} | {APP_AUTHOR}",
-            font=ctk.CTkFont(size=10),
+            font=ctk.CTkFont(size=FONTS['small']),
             text_color="#64748b"
         ).pack(side="right", padx=15, pady=10)
 
@@ -188,7 +209,7 @@ class AIContextStudioApp(ctk.CTk):
 
     def _create_footer(self) -> None:
         """Create the status bar footer."""
-        footer = ctk.CTkFrame(self, height=32, fg_color="#e2e8f0")
+        footer = ctk.CTkFrame(self, height=36, fg_color="#e2e8f0")
         footer.pack(fill="x", side="bottom")
         footer.pack_propagate(False)
 
@@ -196,28 +217,47 @@ class AIContextStudioApp(ctk.CTk):
         self.status_icon = ctk.CTkLabel(
             footer,
             text="\u25CF",
-            font=ctk.CTkFont(size=10),
+            font=ctk.CTkFont(size=FONTS['body_small']),
             text_color=COLORS['success']
         )
-        self.status_icon.pack(side="left", padx=(15, 5), pady=6)
+        self.status_icon.pack(side="left", padx=(15, 5), pady=8)
 
         # Status message
         self.status_bar = ctk.CTkLabel(
             footer,
             text="\u2728 Benvenuto! Segui la guida per iniziare.",
-            font=ctk.CTkFont(size=11),
+            font=ctk.CTkFont(size=FONTS['body_small']),
             text_color="#475569"
         )
-        self.status_bar.pack(side="left", pady=6)
+        self.status_bar.pack(side="left", pady=8)
 
         # Time display
         self.status_time = ctk.CTkLabel(
             footer,
             text="",
-            font=ctk.CTkFont(size=10),
+            font=ctk.CTkFont(size=FONTS['small']),
             text_color="#94a3b8"
         )
-        self.status_time.pack(side="right", padx=15, pady=6)
+        self.status_time.pack(side="right", padx=15, pady=8)
+
+    def _create_shortcut_bar(self) -> None:
+        """Create keyboard shortcuts info bar."""
+        shortcut_frame = ctk.CTkFrame(self, height=28, fg_color="#1e293b")
+        shortcut_frame.pack(fill="x", side="bottom")
+        shortcut_frame.pack_propagate(False)
+
+        shortcuts_text = (
+            "Scorciatoie:  Ctrl+O Apri  |  Ctrl+Enter Scansiona  |  "
+            "Ctrl+G Genera Tutti  |  Ctrl+S Salva  |  Ctrl+Shift+S Salva Tutti  |  "
+            "F1 Guida  |  Esc Annulla"
+        )
+
+        ctk.CTkLabel(
+            shortcut_frame,
+            text=shortcuts_text,
+            font=ctk.CTkFont(size=FONTS['small']),
+            text_color="#94a3b8"
+        ).pack(pady=5)
 
     def _show_guide(self) -> None:
         """Switch to the guide tab."""

@@ -21,12 +21,21 @@ from .constants import (
     SUPPORTED_EXTENSIONS,
     TOKEN_FACTOR,
 )
-from .models import FileInfo, ScanResult
+from .models import ExistingDoc, FileInfo, GenerationType, ScanResult
 
 logger = logging.getLogger(__name__)
 
 # Type alias for progress callbacks
 ProgressCallback = Callable[[str, int], None]
+
+# Documentation file patterns to detect
+DOC_FILENAMES = {gt.filename for gt in GenerationType}
+COMMON_DOC_FILES = {
+    'README.md', 'CHANGELOG.md', 'CONTRIBUTING.md', 'LICENSE.md',
+    'ARCHITECTURE.md', 'DOCS.md', 'DOCUMENTATION.md', 'API.md',
+    'SECURITY.md', 'TESTING.md', 'DEPLOYMENT.md', 'INSTALL.md',
+}
+DOC_FOLDERS = {'docs', 'doc', 'documentation', 'wiki'}
 
 
 class FastFileScanner:
@@ -282,3 +291,148 @@ class FastFileScanner:
         """
         if self._progress_callback:
             self._progress_callback(message, percent)
+
+    def detect_existing_docs(self, result: ScanResult) -> None:
+        """
+        Detect existing documentation files in the project.
+
+        Scans for:
+        - Files matching GenerationType filenames
+        - Common documentation files (README, CHANGELOG, etc.)
+        - Documentation in common doc folders
+
+        Args:
+            result: ScanResult to populate with existing docs.
+        """
+        root = result.root_path
+        logger.info("Detecting existing documentation in: %s", root)
+
+        # Locations to search for docs
+        search_paths = [root]
+        for folder in DOC_FOLDERS:
+            doc_path = root / folder
+            if doc_path.exists() and doc_path.is_dir():
+                search_paths.append(doc_path)
+
+        found_docs: dict[str, ExistingDoc] = {}
+
+        for search_path in search_paths:
+            self._scan_for_docs(search_path, root, found_docs)
+
+        result.existing_docs = found_docs
+        logger.info("Found %d existing documentation files", len(found_docs))
+
+    def _scan_for_docs(
+        self,
+        search_path: Path,
+        root: Path,
+        found_docs: dict[str, ExistingDoc]
+    ) -> None:
+        """
+        Scan a directory for documentation files.
+
+        Args:
+            search_path: Directory to scan.
+            root: Project root for relative paths.
+            found_docs: Dictionary to populate with found docs.
+        """
+        try:
+            for entry in os.scandir(search_path):
+                if not entry.is_file():
+                    continue
+
+                name = entry.name
+                if not name.lower().endswith('.md'):
+                    continue
+
+                # Check if it's a known doc file
+                is_known = (
+                    name in DOC_FILENAMES or
+                    name in COMMON_DOC_FILES or
+                    name.upper() in DOC_FILENAMES or
+                    name.upper() in COMMON_DOC_FILES
+                )
+
+                if is_known or search_path != root:
+                    # Include all .md in doc folders, only known ones in root
+                    self._add_existing_doc(entry, root, found_docs)
+
+        except OSError as e:
+            logger.debug("Error scanning for docs in %s: %s", search_path, e)
+
+    def _add_existing_doc(
+        self,
+        entry: os.DirEntry,
+        root: Path,
+        found_docs: dict[str, ExistingDoc]
+    ) -> None:
+        """
+        Add a documentation file to the found docs.
+
+        Args:
+            entry: File entry to add.
+            root: Project root for relative paths.
+            found_docs: Dictionary to add the doc to.
+        """
+        try:
+            path = Path(entry.path)
+            rel_path = str(path.relative_to(root))
+            filename = entry.name
+
+            # Read content
+            content = self._read_file_safe(path) or ""
+
+            # Check if potentially outdated (simple heuristics)
+            is_outdated = self._check_if_outdated(content, filename)
+
+            doc = ExistingDoc(
+                path=path,
+                relative_path=rel_path,
+                filename=filename,
+                content=content,
+                is_outdated=is_outdated
+            )
+
+            # Use filename as key for easy lookup
+            found_docs[filename] = doc
+            logger.debug("Found existing doc: %s (outdated: %s)", rel_path, is_outdated)
+
+        except OSError as e:
+            logger.debug("Error adding doc %s: %s", entry.path, e)
+
+    def _check_if_outdated(self, content: str, filename: str) -> bool:
+        """
+        Check if a documentation file appears outdated.
+
+        Uses heuristics like:
+        - Very short content
+        - Placeholder text
+        - Old date references
+
+        Args:
+            content: File content to check.
+            filename: Name of the file.
+
+        Returns:
+            True if the file appears outdated.
+        """
+        if not content:
+            return True
+
+        # Very short docs are likely outdated/incomplete
+        if len(content) < 200:
+            return True
+
+        content_lower = content.lower()
+
+        # Check for placeholder indicators
+        placeholders = [
+            'todo:', 'fixme:', 'coming soon', 'work in progress',
+            'wip', 'placeholder', 'to be documented', 'tbd',
+            '[inserisci', '[aggiungi', '[da completare'
+        ]
+        for placeholder in placeholders:
+            if placeholder in content_lower:
+                return True
+
+        return False

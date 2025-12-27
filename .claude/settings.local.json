@@ -10,7 +10,9 @@
       "Bash(timeout /t 3)",
       "Bash(tasklist:*)",
       "Bash(findstr:*)",
-      "Bash(move ai_context_studio.pyw launcher.pyw)"
+      "Bash(move ai_context_studio.pyw launcher.pyw)",
+      "Bash(timeout:*)",
+      "Bash(cat:*)"
     ]
   }
 }

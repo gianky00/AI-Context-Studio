@@ -23,8 +23,9 @@ import customtkinter as ctk
 
 from ..api_client import GeminiAPIClient
 from ..config import ConfigManager
-from ..constants import COLORS, TOKEN_FACTOR
+from ..constants import COLORS, FONTS, TOKEN_FACTOR
 from ..models import (
+    ExistingDoc,
     FileInfo,
     GenerationResult,
     GenerationType,
@@ -109,13 +110,13 @@ class SetupTab(ctk.CTkFrame):
         ctk.CTkLabel(
             api_header,
             text="\U0001F511 Connessione API",
-            font=ctk.CTkFont(size=16, weight="bold")
+            font=ctk.CTkFont(size=FONTS['header'], weight="bold")
         ).pack(side="left")
 
         self.api_status_badge = ctk.CTkLabel(
             api_header,
             text="\u25CF Non connesso",
-            font=ctk.CTkFont(size=11),
+            font=ctk.CTkFont(size=FONTS['body_small']),
             text_color=COLORS['text_muted']
         )
         self.api_status_badge.pack(side="right")
@@ -131,9 +132,9 @@ class SetupTab(ctk.CTkFrame):
         ctk.CTkLabel(
             info_box,
             text="\U0001F4A1 Non hai una API Key? Ottienila gratis su: https://makersuite.google.com/app/apikey",
-            font=ctk.CTkFont(size=10),
+            font=ctk.CTkFont(size=FONTS['body_small']),
             text_color=COLORS['text_muted']
-        ).pack(pady=8)
+        ).pack(pady=10)
 
         # API key row
         api_row = ctk.CTkFrame(api_section, fg_color="transparent")
@@ -143,8 +144,9 @@ class SetupTab(ctk.CTkFrame):
             api_row,
             placeholder_text="Inserisci Google Gemini API Key...",
             show="\u2022",
-            width=400,
-            height=38
+            width=420,
+            height=42,
+            font=ctk.CTkFont(size=FONTS['body'])
         )
         self.api_key_entry.pack(side="left", padx=(0, 10))
         add_tooltip(
@@ -155,8 +157,9 @@ class SetupTab(ctk.CTkFrame):
         self.show_key_btn = ctk.CTkButton(
             api_row,
             text="\U0001F441",
-            width=38,
-            height=38,
+            width=42,
+            height=42,
+            font=ctk.CTkFont(size=FONTS['button']),
             command=self._toggle_key_visibility
         )
         self.show_key_btn.pack(side="left", padx=(0, 10))
@@ -165,8 +168,9 @@ class SetupTab(ctk.CTkFrame):
         self.connect_btn = ctk.CTkButton(
             api_row,
             text="\U0001F50C Connetti e Salva",
-            width=140,
-            height=38,
+            width=160,
+            height=42,
+            font=ctk.CTkFont(size=FONTS['button'], weight="bold"),
             fg_color=COLORS['primary'],
             hover_color=COLORS['primary_hover'],
             command=self._connect_api
@@ -182,7 +186,7 @@ class SetupTab(ctk.CTkFrame):
         ctk.CTkLabel(
             project_section,
             text="\U0001F4C2 Progetto da Analizzare",
-            font=ctk.CTkFont(size=16, weight="bold")
+            font=ctk.CTkFont(size=FONTS['header'], weight="bold")
         ).pack(anchor="w", padx=15, pady=(15, 10))
 
         # Path row
@@ -191,31 +195,34 @@ class SetupTab(ctk.CTkFrame):
 
         self.path_entry = ctk.CTkEntry(
             path_row,
-            placeholder_text="Seleziona la cartella root del progetto...",
-            width=500,
-            height=38
+            placeholder_text="Seleziona la cartella root del progetto... (Ctrl+O)",
+            width=520,
+            height=42,
+            font=ctk.CTkFont(size=FONTS['body'])
         )
         self.path_entry.pack(side="left", padx=(0, 10))
         add_tooltip(
             self.path_entry,
-            "Il percorso della cartella principale del tuo progetto"
+            "Il percorso della cartella principale del tuo progetto - Scorciatoia: Ctrl+O"
         )
 
         browse_btn = ctk.CTkButton(
             path_row,
             text="\U0001F4C1 Sfoglia",
-            width=100,
-            height=38,
+            width=110,
+            height=42,
+            font=ctk.CTkFont(size=FONTS['button']),
             command=self._browse_folder
         )
         browse_btn.pack(side="left", padx=(0, 10))
-        add_tooltip(browse_btn, "Apri il file browser per selezionare la cartella")
+        add_tooltip(browse_btn, "Apri il file browser - Scorciatoia: Ctrl+O")
 
         self.scan_btn = ctk.CTkButton(
             path_row,
             text="\U0001F50D Scansiona",
-            width=120,
-            height=38,
+            width=140,
+            height=42,
+            font=ctk.CTkFont(size=FONTS['button'], weight="bold"),
             fg_color=COLORS['success'],
             hover_color=COLORS['success_hover'],
             command=self._start_scan
@@ -223,7 +230,7 @@ class SetupTab(ctk.CTkFrame):
         self.scan_btn.pack(side="left")
         add_tooltip(
             self.scan_btn,
-            "Avvia la scansione del progetto per trovare tutti i file di codice"
+            "Avvia la scansione del progetto - Scorciatoia: Ctrl+Enter"
         )
 
         # Progress
@@ -232,8 +239,8 @@ class SetupTab(ctk.CTkFrame):
 
         self.progress_bar = ctk.CTkProgressBar(
             self.progress_frame,
-            width=600,
-            height=8
+            width=620,
+            height=10
         )
         self.progress_bar.pack(side="left", padx=(0, 10))
         self.progress_bar.set(0)
@@ -241,7 +248,7 @@ class SetupTab(ctk.CTkFrame):
         self.progress_label = ctk.CTkLabel(
             self.progress_frame,
             text="",
-            font=ctk.CTkFont(size=11),
+            font=ctk.CTkFont(size=FONTS['body_small']),
             text_color=COLORS['text_muted']
         )
         self.progress_label.pack(side="left")
@@ -257,13 +264,13 @@ class SetupTab(ctk.CTkFrame):
         ctk.CTkLabel(
             stats_header,
             text="\U0001F4CA Statistiche Progetto",
-            font=ctk.CTkFont(size=16, weight="bold")
+            font=ctk.CTkFont(size=FONTS['header'], weight="bold")
         ).pack(side="left")
 
         ctk.CTkLabel(
             stats_header,
             text="Questi dati aiutano a stimare il costo della generazione",
-            font=ctk.CTkFont(size=10),
+            font=ctk.CTkFont(size=FONTS['body_small']),
             text_color=COLORS['text_muted']
         ).pack(side="right")
 
@@ -280,21 +287,21 @@ class SetupTab(ctk.CTkFrame):
         ]
 
         for i, (key, icon, label, default, tooltip_text) in enumerate(stats_config):
-            card = ctk.CTkFrame(stats_grid, width=140, height=80)
+            card = ctk.CTkFrame(stats_grid, width=155, height=90)
             card.grid(row=0, column=i, padx=8, pady=5)
             card.grid_propagate(False)
 
             ctk.CTkLabel(
                 card,
                 text=f"{icon} {label}",
-                font=ctk.CTkFont(size=10),
+                font=ctk.CTkFont(size=FONTS['body_small']),
                 text_color=COLORS['text_muted']
-            ).pack(pady=(12, 2))
+            ).pack(pady=(14, 4))
 
             value_label = ctk.CTkLabel(
                 card,
                 text=default,
-                font=ctk.CTkFont(size=18, weight="bold")
+                font=ctk.CTkFont(size=20, weight="bold")
             )
             value_label.pack()
 
@@ -312,7 +319,7 @@ class SetupTab(ctk.CTkFrame):
         ctk.CTkLabel(
             tree_header,
             text="\U0001F333 File Trovati",
-            font=ctk.CTkFont(size=16, weight="bold")
+            font=ctk.CTkFont(size=FONTS['header'], weight="bold")
         ).pack(side="left")
 
         self.file_tree = OptimizedFileTree(tree_section)
@@ -442,13 +449,17 @@ class SetupTab(ctk.CTkFrame):
         self.progress_bar.set(1)
         self.progress_label.configure(text="\u2705 Completato!")
 
+        # Detect existing documentation files
+        self.scanner.detect_existing_docs(result)
+
         self.file_tree.load_files(result.files)
         self._update_stats()
 
-        self._on_status_update(
-            f"\u2705 Scansione completata: {len(result.files)} file trovati",
-            "success"
-        )
+        # Build status message with existing docs info
+        status_msg = f"\u2705 Scansione completata: {len(result.files)} file trovati"
+        if result.existing_docs:
+            status_msg += f" | {len(result.existing_docs)} doc .md esistenti"
+        self._on_status_update(status_msg, "success")
 
     def _update_stats(self) -> None:
         """Update statistics display."""
@@ -528,7 +539,11 @@ class GeneratorTab(ctk.CTkFrame):
         GenerationType.API_DOCS,
         GenerationType.TESTING,
         GenerationType.SECURITY,
-        GenerationType.ONBOARDING
+        GenerationType.ONBOARDING,
+        GenerationType.DATABASE,
+        GenerationType.DEPLOYMENT,
+        GenerationType.DEPENDENCIES,
+        GenerationType.PERFORMANCE,
     ]
 
     def __init__(
@@ -560,15 +575,17 @@ class GeneratorTab(ctk.CTkFrame):
 
     def _setup_ui(self) -> None:
         """Set up the tab UI."""
-        # Two-column layout
+        # Two-column layout with proper proportions
         left_panel = ctk.CTkFrame(self)
         left_panel.pack(side="left", fill="both", expand=True, padx=(20, 10), pady=20)
 
         self.smart_preset_panel = SmartPresetPanel(left_panel)
         self.smart_preset_panel.pack(fill="both", expand=True)
 
-        right_panel = ctk.CTkFrame(self)
-        right_panel.pack(side="right", fill="both", padx=(10, 20), pady=20, ipadx=10)
+        # Right panel - fixed width, full height
+        right_panel = ctk.CTkFrame(self, width=400)
+        right_panel.pack(side="right", fill="y", padx=(10, 20), pady=20)
+        right_panel.pack_propagate(False)
 
         self._create_model_section(right_panel)
         self._create_bundle_section(right_panel)
@@ -580,7 +597,7 @@ class GeneratorTab(ctk.CTkFrame):
     def _create_model_section(self, parent: ctk.CTkFrame) -> None:
         """Create model selection section."""
         model_section = ctk.CTkFrame(parent)
-        model_section.pack(fill="x", padx=15, pady=(15, 10))
+        model_section.pack(fill="x", padx=10, pady=(10, 8))
 
         model_header = ctk.CTkFrame(model_section, fg_color="transparent")
         model_header.pack(fill="x", padx=10, pady=(10, 5))
@@ -588,15 +605,8 @@ class GeneratorTab(ctk.CTkFrame):
         ctk.CTkLabel(
             model_header,
             text="\U0001F916 Modello AI",
-            font=ctk.CTkFont(size=14, weight="bold")
+            font=ctk.CTkFont(size=FONTS['subheader'], weight="bold")
         ).pack(side="left")
-
-        ctk.CTkLabel(
-            model_header,
-            text="Modelli piu' recenti = migliori risultati",
-            font=ctk.CTkFont(size=9),
-            text_color=COLORS['text_muted']
-        ).pack(side="right")
 
         model_row = ctk.CTkFrame(model_section, fg_color="transparent")
         model_row.pack(fill="x", padx=10, pady=(0, 10))
@@ -604,24 +614,27 @@ class GeneratorTab(ctk.CTkFrame):
         self.model_combo = ctk.CTkComboBox(
             model_row,
             values=["Connetti API per caricare..."],
-            width=250,
+            width=320,
+            height=38,
+            font=ctk.CTkFont(size=FONTS['body']),
             state="readonly"
         )
-        self.model_combo.pack(side="left", padx=(0, 10))
+        self.model_combo.pack(side="left", padx=(0, 8))
         add_tooltip(
             self.model_combo,
-            "Seleziona il modello Gemini da usare. I modelli 'pro' sono piu' potenti."
+            "Seleziona il modello Gemini da usare. I modelli 'pro' sono piu' potenti"
         )
 
         self.refresh_btn = ctk.CTkButton(
             model_row,
             text="\U0001F504",
-            width=35,
-            height=28,
+            width=42,
+            height=38,
+            font=ctk.CTkFont(size=FONTS['button']),
             command=self._refresh_models
         )
         self.refresh_btn.pack(side="left")
-        add_tooltip(self.refresh_btn, "Ricarica la lista dei modelli disponibili")
+        add_tooltip(self.refresh_btn, "Ricarica lista modelli (Ctrl+R)")
 
     def _create_bundle_section(self, parent: ctk.CTkFrame) -> None:
         """Create bundle generation section."""
@@ -630,102 +643,270 @@ class GeneratorTab(ctk.CTkFrame):
             fg_color=COLORS['bg_light'],
             corner_radius=8
         )
-        bundle_section.pack(fill="x", padx=15, pady=10)
+        bundle_section.pack(fill="x", padx=10, pady=8)
 
         ctk.CTkLabel(
             bundle_section,
             text="\u2B50 Generazione Completa",
-            font=ctk.CTkFont(size=13, weight="bold")
-        ).pack(anchor="w", padx=12, pady=(12, 5))
+            font=ctk.CTkFont(size=FONTS['subheader'], weight="bold")
+        ).pack(anchor="w", padx=12, pady=(12, 4))
 
+        num_docs = len(self.ALL_DOC_TYPES)
         ctk.CTkLabel(
             bundle_section,
-            text="Genera tutti i 7 documenti in sequenza automaticamente",
-            font=ctk.CTkFont(size=10),
+            text=f"Genera tutti gli {num_docs} documenti in sequenza",
+            font=ctk.CTkFont(size=FONTS['body_small']),
             text_color=COLORS['text_muted']
         ).pack(anchor="w", padx=12, pady=(0, 8))
 
         self.bundle_btn = ctk.CTkButton(
             bundle_section,
-            text="\U0001F680 GENERA TUTTI (7 documenti)",
-            width=280,
-            height=45,
-            font=ctk.CTkFont(size=14, weight="bold"),
+            text=f"\U0001F680 GENERA TUTTI ({num_docs} doc)",
+            height=48,
+            font=ctk.CTkFont(size=FONTS['button'], weight="bold"),
             fg_color=COLORS['success'],
             hover_color=COLORS['success_hover'],
             command=self._start_bundle_generation
         )
-        self.bundle_btn.pack(pady=(0, 12))
+        self.bundle_btn.pack(fill="x", padx=12, pady=(0, 12))
         add_tooltip(
             self.bundle_btn,
-            "Genera tutti i 7 tipi di documento in sequenza."
+            f"Genera tutti gli {num_docs} tipi di documento in sequenza - Scorciatoia: Ctrl+G"
         )
 
     def _create_single_generators(self, parent: ctk.CTkFrame) -> None:
-        """Create single document generation buttons."""
+        """Create document selection with scrollable multi-select list."""
         gen_section = ctk.CTkFrame(parent)
-        gen_section.pack(fill="both", expand=True, padx=15, pady=10)
+        gen_section.pack(fill="both", expand=True, padx=10, pady=5)
 
+        # Header with selection buttons
         gen_header = ctk.CTkFrame(gen_section, fg_color="transparent")
-        gen_header.pack(fill="x", padx=10, pady=(10, 5))
+        gen_header.pack(fill="x", padx=5, pady=(10, 8))
 
         ctk.CTkLabel(
             gen_header,
-            text="\U0001F4C4 Generatori Singoli",
-            font=ctk.CTkFont(size=14, weight="bold")
+            text="\U0001F4C4 Seleziona Documenti",
+            font=ctk.CTkFont(size=FONTS['subheader'], weight="bold")
         ).pack(side="left")
 
-        ctk.CTkLabel(
-            gen_header,
-            text="Oppure genera un documento specifico",
-            font=ctk.CTkFont(size=9),
-            text_color=COLORS['text_muted']
-        ).pack(side="right")
+        # Selection buttons
+        sel_btns = ctk.CTkFrame(gen_header, fg_color="transparent")
+        sel_btns.pack(side="right")
 
-        gen_grid = ctk.CTkFrame(gen_section, fg_color="transparent")
-        gen_grid.pack(fill="both", expand=True, padx=10, pady=5)
+        ctk.CTkButton(
+            sel_btns,
+            text="\u2713 Tutti",
+            width=60,
+            height=26,
+            font=ctk.CTkFont(size=FONTS['small']),
+            command=self._select_all_generators
+        ).pack(side="left", padx=2)
 
-        self.gen_buttons: dict[GenerationType, ctk.CTkButton] = {}
+        ctk.CTkButton(
+            sel_btns,
+            text="\u2717 Nessuno",
+            width=70,
+            height=26,
+            font=ctk.CTkFont(size=FONTS['small']),
+            fg_color=COLORS['slate'],
+            command=self._deselect_all_generators
+        ).pack(side="left", padx=2)
 
-        for i, gt in enumerate(self.ALL_DOC_TYPES):
-            btn = ctk.CTkButton(
-                gen_grid,
-                text=f"{gt.icon}\n{gt.label}",
-                width=130,
-                height=60,
-                font=ctk.CTkFont(size=10, weight="bold"),
-                fg_color=gt.color,
-                command=lambda t=gt: self._start_single_generation(t)
+        # Scrollable frame for generators
+        gen_scroll = ctk.CTkScrollableFrame(
+            gen_section,
+            fg_color="transparent",
+            scrollbar_button_color=COLORS['primary'],
+            scrollbar_button_hover_color=COLORS['primary_hover']
+        )
+        gen_scroll.pack(fill="both", expand=True, padx=2, pady=2)
+
+        self.gen_checkboxes: dict[GenerationType, tuple[ctk.CTkCheckBox, tk.BooleanVar]] = {}
+
+        for gt in self.ALL_DOC_TYPES:
+            var = tk.BooleanVar(value=False)
+
+            # Card for each generator
+            card = ctk.CTkFrame(gen_scroll, fg_color=COLORS['bg_light'], corner_radius=6)
+            card.pack(fill="x", pady=3, padx=2)
+
+            card_inner = ctk.CTkFrame(card, fg_color="transparent")
+            card_inner.pack(fill="x", padx=4, pady=6)
+
+            # Colored indicator bar
+            indicator = ctk.CTkFrame(card_inner, width=5, height=28, fg_color=gt.color, corner_radius=2)
+            indicator.pack(side="left", padx=(2, 8))
+
+            cb = ctk.CTkCheckBox(
+                card_inner,
+                text=f"{gt.icon} {gt.label}",
+                variable=var,
+                font=ctk.CTkFont(size=FONTS['body']),
+                checkbox_width=20,
+                checkbox_height=20,
+                onvalue=True,
+                offvalue=False
             )
-            btn.grid(row=i // 2, column=i % 2, padx=5, pady=5, sticky="nsew")
-            self.gen_buttons[gt] = btn
-            add_tooltip(btn, gt.description)
+            cb.pack(side="left", fill="x", expand=True)
 
-        gen_grid.grid_columnconfigure(0, weight=1)
-        gen_grid.grid_columnconfigure(1, weight=1)
+            self.gen_checkboxes[gt] = (cb, var)
+
+            # Add tooltip to both card and checkbox
+            add_tooltip(card, gt.description)
+            add_tooltip(cb, gt.description)
+
+        # Generate Selected button
+        self.gen_selected_btn = ctk.CTkButton(
+            gen_section,
+            text="\u25B6 Genera Selezionati",
+            height=42,
+            font=ctk.CTkFont(size=FONTS['body'], weight="bold"),
+            fg_color=COLORS['primary'],
+            hover_color=COLORS['primary_hover'],
+            command=self._start_selected_generation
+        )
+        self.gen_selected_btn.pack(fill="x", padx=4, pady=(10, 8))
+        add_tooltip(self.gen_selected_btn, "Genera solo i documenti selezionati")
+
+    def _select_all_generators(self) -> None:
+        """Select all generator checkboxes."""
+        for _, (cb, var) in self.gen_checkboxes.items():
+            var.set(True)
+
+    def _deselect_all_generators(self) -> None:
+        """Deselect all generator checkboxes."""
+        for _, (cb, var) in self.gen_checkboxes.items():
+            var.set(False)
+
+    def _get_selected_generators(self) -> list[GenerationType]:
+        """Get list of selected generators."""
+        return [gt for gt, (cb, var) in self.gen_checkboxes.items() if var.get()]
+
+    def _validate_generation(self) -> bool:
+        """Validate that generation can proceed."""
+        if not self.setup_tab.is_api_connected():
+            self._on_status_update(
+                "\u26A0\uFE0F Connetti prima l'API nella tab Setup",
+                "warning"
+            )
+            return False
+
+        scan_result = self.setup_tab.get_scan_result()
+        if not scan_result:
+            self._on_status_update(
+                "\u26A0\uFE0F Scansiona prima un progetto nella tab Setup",
+                "warning"
+            )
+            return False
+
+        return True
+
+    def _start_selected_generation(self) -> None:
+        """Start generation for selected document types."""
+        selected = self._get_selected_generators()
+        if not selected:
+            self._on_status_update("\u26A0\uFE0F Seleziona almeno un documento da generare", "warning")
+            return
+
+        if self._generating:
+            self._on_status_update("\u23F3 Generazione gia' in corso...", "warning")
+            return
+
+        prepared = self._validate_and_prepare()
+        if not prepared:
+            return
+
+        selected_model, code_content, smart_preset, scan_result = prepared
+
+        self._set_generating_state(True)
+        self._cancel_generation = False
+        self._on_status_update(
+            f"\U0001F680 Generazione di {len(selected)} documenti...",
+            "info"
+        )
+
+        def selected_task() -> None:
+            total_docs = len(selected)
+            completed = 0
+            failed = 0
+
+            for i, doc_type in enumerate(selected):
+                if self._cancel_generation:
+                    self.event_queue.put(
+                        self._on_bundle_complete,
+                        completed,
+                        failed,
+                        total_docs,
+                        True
+                    )
+                    return
+
+                # Check for existing doc
+                existing_doc = self._get_existing_doc_for_type(doc_type, scan_result)
+                action = "Aggiornando" if existing_doc else "Generando"
+
+                base_pct = (i / total_docs) * 100
+                self.event_queue.put(
+                    self._update_gen_status,
+                    f"\U0001F4C4 [{i + 1}/{total_docs}] {action} {doc_type.label}...",
+                    int(base_pct)
+                )
+
+                result = self.api_client.generate_documentation(
+                    model_name=selected_model,
+                    code_content=code_content,
+                    doc_type=doc_type,
+                    smart_preset=smart_preset,
+                    progress_callback=lambda msg, pct: self.event_queue.put(
+                        self._update_gen_status,
+                        f"\U0001F4C4 [{i + 1}/{total_docs}] {msg}",
+                        int(base_pct + (pct / total_docs))
+                    ),
+                    existing_doc=existing_doc
+                )
+
+                if result.success:
+                    completed += 1
+                    self.event_queue.put(self._on_generation_complete, result)
+                else:
+                    failed += 1
+
+                if i < total_docs - 1:
+                    time.sleep(1)
+
+            self.event_queue.put(
+                self._on_bundle_complete,
+                completed,
+                failed,
+                total_docs,
+                False
+            )
+
+        self._executor.submit(selected_task)
 
     def _create_status_section(self, parent: ctk.CTkFrame) -> None:
         """Create status display section."""
         status_section = ctk.CTkFrame(parent)
         status_section.pack(fill="x", padx=15, pady=(10, 15))
 
-        self.gen_progress = ctk.CTkProgressBar(status_section, width=280, height=10)
-        self.gen_progress.pack(pady=(15, 5))
+        self.gen_progress = ctk.CTkProgressBar(status_section, width=300, height=12)
+        self.gen_progress.pack(pady=(15, 8))
         self.gen_progress.set(0)
 
         self.gen_status = ctk.CTkLabel(
             status_section,
             text="\u2728 Pronto per generare",
-            font=ctk.CTkFont(size=11),
+            font=ctk.CTkFont(size=FONTS['body']),
             text_color=COLORS['text_muted']
         )
-        self.gen_status.pack(pady=(0, 5))
+        self.gen_status.pack(pady=(0, 8))
 
         self.cancel_btn = ctk.CTkButton(
             status_section,
-            text="\u23F9 Interrompi",
-            width=100,
-            height=28,
+            text="\u23F9 Interrompi (Esc)",
+            width=130,
+            height=34,
+            font=ctk.CTkFont(size=FONTS['body_small']),
             fg_color=COLORS['danger'],
             hover_color=COLORS['danger_hover'],
             command=self._cancel_current_generation
@@ -768,7 +949,7 @@ class GeneratorTab(ctk.CTkFrame):
 
     def _validate_and_prepare(
         self
-    ) -> Optional[tuple[str, str, SmartPreset]]:
+    ) -> Optional[tuple[str, str, SmartPreset, ScanResult]]:
         """Validate and prepare for generation."""
         if not self.setup_tab.is_api_connected():
             self._on_status_update(
@@ -820,7 +1001,37 @@ class GeneratorTab(ctk.CTkFrame):
 
         smart_preset = self.smart_preset_panel.get_preset()
 
-        return selected_model, code_content, smart_preset
+        return selected_model, code_content, smart_preset, scan_result
+
+    def _get_existing_doc_for_type(
+        self,
+        doc_type: GenerationType,
+        scan_result: ScanResult
+    ) -> Optional[ExistingDoc]:
+        """
+        Get existing documentation for a generation type.
+
+        Args:
+            doc_type: The generation type.
+            scan_result: The scan result with existing docs.
+
+        Returns:
+            ExistingDoc if found, None otherwise.
+        """
+        if not scan_result.existing_docs:
+            return None
+
+        # Try exact filename match first
+        if doc_type.filename in scan_result.existing_docs:
+            return scan_result.existing_docs[doc_type.filename]
+
+        # Try case-insensitive match
+        filename_lower = doc_type.filename.lower()
+        for name, doc in scan_result.existing_docs.items():
+            if name.lower() == filename_lower:
+                return doc
+
+        return None
 
     def _set_generating_state(self, generating: bool) -> None:
         """Set UI state during generation."""
@@ -828,8 +1039,9 @@ class GeneratorTab(ctk.CTkFrame):
         state = "disabled" if generating else "normal"
 
         self.bundle_btn.configure(state=state)
-        for btn in self.gen_buttons.values():
-            btn.configure(state=state)
+        self.gen_selected_btn.configure(state=state)
+        for _, (cb, var) in self.gen_checkboxes.items():
+            cb.configure(state=state)
 
         if generating:
             self.cancel_btn.pack(pady=(5, 15))
@@ -854,12 +1066,16 @@ class GeneratorTab(ctk.CTkFrame):
         if not prepared:
             return
 
-        selected_model, code_content, smart_preset = prepared
+        selected_model, code_content, smart_preset, scan_result = prepared
+
+        # Check for existing doc
+        existing_doc = self._get_existing_doc_for_type(gen_type, scan_result)
+        action = "Aggiornamento" if existing_doc else "Generazione"
 
         self._set_generating_state(True)
         self._cancel_generation = False
         self._on_status_update(
-            f"\U0001F680 Generazione {gen_type.label} in corso...",
+            f"\U0001F680 {action} {gen_type.label} in corso...",
             "info"
         )
 
@@ -871,7 +1087,8 @@ class GeneratorTab(ctk.CTkFrame):
                 smart_preset=smart_preset,
                 progress_callback=lambda msg, pct: self.event_queue.put(
                     self._update_gen_status, msg, pct
-                )
+                ),
+                existing_doc=existing_doc
             )
             self.event_queue.put(self._on_single_generation_done, result)
 
@@ -913,17 +1130,17 @@ class GeneratorTab(ctk.CTkFrame):
         if not prepared:
             return
 
-        selected_model, code_content, smart_preset = prepared
+        selected_model, code_content, smart_preset, scan_result = prepared
+        total_docs = len(self.ALL_DOC_TYPES)
 
         self._set_generating_state(True)
         self._cancel_generation = False
         self._on_status_update(
-            "\U0001F680 Generazione completa avviata (7 documenti)...",
+            f"\U0001F680 Generazione completa avviata ({total_docs} documenti)...",
             "info"
         )
 
         def bundle_task() -> None:
-            total_docs = len(self.ALL_DOC_TYPES)
             completed = 0
             failed = 0
 
@@ -938,10 +1155,14 @@ class GeneratorTab(ctk.CTkFrame):
                     )
                     return
 
+                # Check for existing doc
+                existing_doc = self._get_existing_doc_for_type(doc_type, scan_result)
+                action = "Aggiornando" if existing_doc else "Generando"
+
                 base_pct = (i / total_docs) * 100
                 self.event_queue.put(
                     self._update_gen_status,
-                    f"\U0001F4C4 [{i + 1}/{total_docs}] Generando {doc_type.label}...",
+                    f"\U0001F4C4 [{i + 1}/{total_docs}] {action} {doc_type.label}...",
                     int(base_pct)
                 )
 
@@ -954,7 +1175,8 @@ class GeneratorTab(ctk.CTkFrame):
                         self._update_gen_status,
                         f"\U0001F4C4 [{i + 1}/{total_docs}] {msg}",
                         int(base_pct + (pct / total_docs))
-                    )
+                    ),
+                    existing_doc=existing_doc
                 )
 
                 if result.success:
@@ -1065,13 +1287,13 @@ class PreviewTab(ctk.CTkFrame):
         ctk.CTkLabel(
             header,
             text="\U0001F4C4 Documenti Generati",
-            font=ctk.CTkFont(size=16, weight="bold")
+            font=ctk.CTkFont(size=FONTS['header'], weight="bold")
         ).pack(side="left")
 
         ctk.CTkLabel(
             header,
-            text="Modifica i documenti prima di salvarli",
-            font=ctk.CTkFont(size=11),
+            text="Modifica i documenti prima di salvarli (Ctrl+S salva, Ctrl+Shift+S salva tutti)",
+            font=ctk.CTkFont(size=FONTS['body_small']),
             text_color=COLORS['text_muted']
         ).pack(side="right")
 
@@ -1086,13 +1308,15 @@ class PreviewTab(ctk.CTkFrame):
         ctk.CTkLabel(
             sel_row,
             text="\U0001F4C1 Documento:",
-            font=ctk.CTkFont(size=12)
+            font=ctk.CTkFont(size=FONTS['body'], weight="bold")
         ).pack(side="left", padx=(0, 10))
 
         self.doc_combo = ctk.CTkComboBox(
             sel_row,
             values=["Nessun documento generato"],
-            width=300,
+            width=340,
+            height=36,
+            font=ctk.CTkFont(size=FONTS['body']),
             state="readonly",
             command=self._on_doc_selected
         )
@@ -1105,7 +1329,7 @@ class PreviewTab(ctk.CTkFrame):
         self.char_label = ctk.CTkLabel(
             sel_row,
             text="",
-            font=ctk.CTkFont(size=11),
+            font=ctk.CTkFont(size=FONTS['body_small']),
             text_color=COLORS['text_muted']
         )
         self.char_label.pack(side="left")
@@ -1117,7 +1341,7 @@ class PreviewTab(ctk.CTkFrame):
 
         self.editor = ctk.CTkTextbox(
             editor_frame,
-            font=ctk.CTkFont(family="Consolas", size=12),
+            font=ctk.CTkFont(family="Consolas", size=FONTS['editor']),
             wrap="word"
         )
         self.editor.pack(fill="both", expand=True, padx=15, pady=15)
@@ -1140,9 +1364,10 @@ class PreviewTab(ctk.CTkFrame):
 
         save_btn = ctk.CTkButton(
             btn_row,
-            text="\U0001F4BE Salva File",
-            width=120,
-            height=38,
+            text="\U0001F4BE Salva (Ctrl+S)",
+            width=150,
+            height=42,
+            font=ctk.CTkFont(size=FONTS['button']),
             fg_color=COLORS['success'],
             hover_color=COLORS['success_hover'],
             command=self._save_current
@@ -1150,14 +1375,15 @@ class PreviewTab(ctk.CTkFrame):
         save_btn.pack(side="left", padx=5)
         add_tooltip(
             save_btn,
-            "Salva il documento corrente nella cartella docs/ del progetto"
+            "Salva il documento corrente - Scorciatoia: Ctrl+S"
         )
 
         save_all_btn = ctk.CTkButton(
             btn_row,
             text="\U0001F4E6 Salva Tutti",
-            width=120,
-            height=38,
+            width=140,
+            height=42,
+            font=ctk.CTkFont(size=FONTS['button']),
             fg_color=COLORS['primary'],
             hover_color=COLORS['primary_hover'],
             command=self._save_all
@@ -1165,14 +1391,15 @@ class PreviewTab(ctk.CTkFrame):
         save_all_btn.pack(side="left", padx=5)
         add_tooltip(
             save_all_btn,
-            "Salva tutti i documenti generati nella cartella docs/"
+            "Salva tutti i documenti - Scorciatoia: Ctrl+Shift+S"
         )
 
         copy_btn = ctk.CTkButton(
             btn_row,
             text="\U0001F4CB Copia",
-            width=100,
-            height=38,
+            width=110,
+            height=42,
+            font=ctk.CTkFont(size=FONTS['button']),
             command=self._copy
         )
         copy_btn.pack(side="left", padx=5)
@@ -1181,8 +1408,9 @@ class PreviewTab(ctk.CTkFrame):
         clear_btn = ctk.CTkButton(
             btn_row,
             text="\U0001F5D1\uFE0F Pulisci",
-            width=100,
-            height=38,
+            width=110,
+            height=42,
+            font=ctk.CTkFont(size=FONTS['button']),
             fg_color=COLORS['slate'],
             command=self._clear_all
         )

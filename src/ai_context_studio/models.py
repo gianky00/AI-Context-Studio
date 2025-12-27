@@ -88,6 +88,38 @@ class GenerationType(Enum):
         "Genera guida onboarding per nuovi sviluppatori: setup day-1, "
         "architettura semplificata, workflow, risorse, FAQ."
     )
+    DATABASE = (
+        "DATABASE_SCHEMA.md",
+        "\U0001F5C4\uFE0F",  # File cabinet
+        "Schema Database",
+        COLORS['indigo'],
+        "Genera documentazione database: schema ER, tabelle, relazioni, "
+        "indici, stored procedures, migration strategy."
+    )
+    DEPLOYMENT = (
+        "DEPLOYMENT_GUIDE.md",
+        "\U0001F4E6",  # Package
+        "Guida Deploy",
+        COLORS['cyan'],
+        "Genera guida deployment: ambienti, configurazioni, CI/CD, "
+        "rollback, monitoring, troubleshooting."
+    )
+    DEPENDENCIES = (
+        "DEPENDENCIES_ANALYSIS.md",
+        "\U0001F517",  # Link
+        "Analisi Dipendenze",
+        COLORS['slate'],
+        "Analizza dipendenze: librerie usate, versioni, licenze, "
+        "vulnerabilità note, alternative suggerite."
+    )
+    PERFORMANCE = (
+        "PERFORMANCE_GUIDE.md",
+        "\u26A1",  # Lightning
+        "Guida Performance",
+        COLORS['warning'],
+        "Genera guida performance: bottleneck identificati, ottimizzazioni, "
+        "caching strategies, profiling, best practices."
+    )
 
     def __init__(
         self,
@@ -221,6 +253,25 @@ class FileInfo:
 
 
 @dataclass
+class ExistingDoc:
+    """
+    Information about an existing markdown documentation file.
+
+    Attributes:
+        path: Absolute path to the file
+        relative_path: Path relative to project root
+        filename: File name only
+        content: File contents (loaded lazily)
+        is_outdated: Whether the file appears outdated
+    """
+    path: Path
+    relative_path: str
+    filename: str
+    content: str = ""
+    is_outdated: bool = False
+
+
+@dataclass
 class ScanResult:
     """
     Result of a project directory scan.
@@ -231,12 +282,14 @@ class ScanResult:
         total_size: Total size of included files in bytes
         estimated_tokens: Estimated token count for AI processing
         content_map: Dictionary mapping relative paths to file contents
+        existing_docs: Dictionary mapping doc type filenames to ExistingDoc
     """
     root_path: Path
     files: list[FileInfo] = field(default_factory=list)
     total_size: int = 0
     estimated_tokens: int = 0
     content_map: dict[str, str] = field(default_factory=dict)
+    existing_docs: dict[str, ExistingDoc] = field(default_factory=dict)
 
 
 @dataclass

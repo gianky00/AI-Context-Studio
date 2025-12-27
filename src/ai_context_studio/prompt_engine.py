@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from .models import GenerationType, SmartPreset
+from .models import ExistingDoc, GenerationType, SmartPreset
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +58,10 @@ REGOLE FONDAMENTALI:
             GenerationType.TESTING: cls._get_testing_prompt(),
             GenerationType.SECURITY: cls._get_security_prompt(),
             GenerationType.ONBOARDING: cls._get_onboarding_prompt(),
+            GenerationType.DATABASE: cls._get_database_prompt(),
+            GenerationType.DEPLOYMENT: cls._get_deployment_prompt(),
+            GenerationType.DEPENDENCIES: cls._get_dependencies_prompt(),
+            GenerationType.PERFORMANCE: cls._get_performance_prompt(),
         }
 
     @classmethod
@@ -65,7 +69,8 @@ REGOLE FONDAMENTALI:
         cls,
         doc_type: GenerationType,
         code_content: str,
-        smart_preset: Optional[SmartPreset] = None
+        smart_preset: Optional[SmartPreset] = None,
+        existing_doc: Optional[ExistingDoc] = None
     ) -> str:
         """
         Build a complete prompt for documentation generation.
@@ -74,6 +79,7 @@ REGOLE FONDAMENTALI:
             doc_type: Type of documentation to generate.
             code_content: Source code to analyze.
             smart_preset: Optional preset configuration.
+            existing_doc: Optional existing documentation to update.
 
         Returns:
             Complete prompt string.
@@ -88,6 +94,11 @@ REGOLE FONDAMENTALI:
             parts.append("\n=== CONTESTO PROGETTO ===")
             parts.append(smart_preset.to_prompt_context())
 
+        # Add existing document context if available
+        if existing_doc:
+            parts.append("\n=== DOCUMENTAZIONE ESISTENTE ===")
+            parts.append(cls._get_existing_doc_context(existing_doc))
+
         parts.append("\n=== ISTRUZIONI SPECIFICHE ===")
         parts.append(cls.GENERATION_PROMPTS[doc_type])
 
@@ -95,12 +106,55 @@ REGOLE FONDAMENTALI:
         parts.append(code_content)
 
         logger.debug(
-            "Built prompt for %s: %d chars",
+            "Built prompt for %s: %d chars (existing doc: %s)",
             doc_type.label,
-            sum(len(p) for p in parts)
+            sum(len(p) for p in parts),
+            existing_doc.filename if existing_doc else "none"
         )
 
         return "\n".join(parts)
+
+    @staticmethod
+    def _get_existing_doc_context(existing_doc: ExistingDoc) -> str:
+        """
+        Build context about existing documentation.
+
+        Args:
+            existing_doc: The existing documentation file.
+
+        Returns:
+            Context string to include in the prompt.
+        """
+        context_parts: list[str] = []
+
+        if existing_doc.is_outdated:
+            context_parts.append(
+                f"ATTENZIONE: Esiste gia' il file '{existing_doc.filename}' ma sembra OBSOLETO o incompleto.\n"
+                "Il tuo compito e' SOSTITUIRLO COMPLETAMENTE con una versione aggiornata e completa.\n"
+                "Mantieni la stessa struttura generale se valida, ma aggiorna tutto il contenuto.\n"
+            )
+        else:
+            context_parts.append(
+                f"ATTENZIONE: Esiste gia' il file '{existing_doc.filename}'.\n"
+                "Il tuo compito e' AGGIORNARE questa documentazione esistente:\n"
+                "- Mantieni le sezioni valide e aggiornale se necessario\n"
+                "- Aggiungi nuove sezioni per funzionalita' mancanti\n"
+                "- Rimuovi riferimenti a codice obsoleto\n"
+                "- Migliora la qualita' dove possibile\n"
+            )
+
+        # Include a preview of the existing content (truncated)
+        if existing_doc.content:
+            preview_length = 2000
+            content_preview = existing_doc.content[:preview_length]
+            if len(existing_doc.content) > preview_length:
+                content_preview += "\n... [contenuto troncato] ..."
+
+            context_parts.append("\n--- CONTENUTO ATTUALE ---\n")
+            context_parts.append(content_preview)
+            context_parts.append("\n--- FINE CONTENUTO ATTUALE ---\n")
+
+        return "\n".join(context_parts)
 
     @staticmethod
     def _get_architecture_prompt() -> str:
@@ -365,6 +419,174 @@ Settimana 1 e 2, good first issues.
 
 ## FAQ
 Domande frequenti con risposte.
+"""
+
+    @staticmethod
+    def _get_database_prompt() -> str:
+        """Get the database schema prompt."""
+        return """
+## GENERA: DATABASE_SCHEMA.md - DOCUMENTAZIONE DATABASE ESAUSTIVA
+
+Crea documentazione database COMPLETA:
+
+### 1. Overview Database
+Tipo database, versione, hosting, pool connections.
+
+### 2. Schema ER (Mermaid)
+Diagramma Entity-Relationship completo.
+
+### 3. Tabelle e Collezioni
+Per OGNI tabella/collezione:
+- Nome, scopo, colonne/campi
+- Tipi dati, constraints
+- Indici, chiavi primarie/foreign
+
+### 4. Relazioni
+Tutte le relazioni con cardinalita'.
+
+### 5. Query Comuni
+Query SQL/NoSQL piu' utilizzate con spiegazioni.
+
+### 6. Stored Procedures/Functions
+Se presenti, documentale.
+
+### 7. Migration Strategy
+Come gestire le migrazioni schema.
+
+### 8. Backup e Recovery
+Strategie backup, retention policy.
+
+### 9. Performance Considerations
+Indici raccomandati, query optimization.
+
+### 10. Seed Data
+Dati di esempio per development.
+"""
+
+    @staticmethod
+    def _get_deployment_prompt() -> str:
+        """Get the deployment guide prompt."""
+        return """
+## GENERA: DEPLOYMENT_GUIDE.md - GUIDA DEPLOYMENT ESAUSTIVA
+
+Crea guida deployment COMPLETA:
+
+### 1. Ambienti
+Development, staging, production con differenze.
+
+### 2. Prerequisiti Infrastruttura
+Server, risorse, servizi cloud necessari.
+
+### 3. Configurazione per Ambiente
+Variabili ambiente, secrets management.
+
+### 4. Build Process
+Comandi build, bundling, optimization.
+
+### 5. CI/CD Pipeline
+Descrizione pipeline, stages, triggers.
+
+### 6. Deployment Steps
+Procedura passo-passo per deploy.
+
+### 7. Rollback Procedure
+Come fare rollback in caso di problemi.
+
+### 8. Health Checks
+Endpoint health, monitoring.
+
+### 9. Scaling
+Horizontal/vertical scaling, auto-scaling.
+
+### 10. Troubleshooting
+Problemi comuni post-deploy e soluzioni.
+
+### 11. Post-Deployment Checklist
+Verifiche da fare dopo ogni deploy.
+"""
+
+    @staticmethod
+    def _get_dependencies_prompt() -> str:
+        """Get the dependencies analysis prompt."""
+        return """
+## GENERA: DEPENDENCIES_ANALYSIS.md - ANALISI DIPENDENZE ESAUSTIVA
+
+Crea analisi dipendenze COMPLETA:
+
+### 1. Overview Dipendenze
+Numero totale, categorie, package manager.
+
+### 2. Dipendenze Runtime
+Tabella con: nome, versione, scopo, licenza.
+
+### 3. Dipendenze Development
+Dev dependencies con scopo.
+
+### 4. Albero Dipendenze
+Dipendenze transitive principali.
+
+### 5. Analisi Licenze
+Compatibilita' licenze, rischi legali.
+
+### 6. Vulnerabilita' Note
+CVE noti, severita', remediation.
+
+### 7. Dipendenze Outdated
+Versioni obsolete, upgrade path.
+
+### 8. Alternative Suggerite
+Librerie alternative piu' leggere o mantenute.
+
+### 9. Lock File Analysis
+Stato del lock file, consistency.
+
+### 10. Raccomandazioni
+Azioni prioritarie per migliorare le dipendenze.
+"""
+
+    @staticmethod
+    def _get_performance_prompt() -> str:
+        """Get the performance guide prompt."""
+        return """
+## GENERA: PERFORMANCE_GUIDE.md - GUIDA PERFORMANCE ESAUSTIVA
+
+Crea guida performance COMPLETA:
+
+### 1. Performance Overview
+Stato attuale, metriche chiave.
+
+### 2. Bottleneck Identificati
+Punti critici nel codice con spiegazioni.
+
+### 3. Ottimizzazioni Codice
+Pattern inefficienti trovati, come fixarli.
+
+### 4. Caching Strategies
+Cosa cachare, TTL, invalidation.
+
+### 5. Database Performance
+Query lente, indici mancanti, N+1 problems.
+
+### 6. Bundle Size (se frontend)
+Analisi bundle, code splitting, lazy loading.
+
+### 7. Memory Management
+Memory leaks potenziali, garbage collection.
+
+### 8. Async/Concurrency
+Uso corretto di async, parallelismo.
+
+### 9. Profiling Guide
+Come profilare l'applicazione, tools consigliati.
+
+### 10. Monitoring Setup
+Metriche da monitorare, alerting.
+
+### 11. Performance Budget
+Target performance da rispettare.
+
+### 12. Quick Wins
+Ottimizzazioni facili ad alto impatto.
 """
 
 

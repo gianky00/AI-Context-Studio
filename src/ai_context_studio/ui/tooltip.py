@@ -75,17 +75,14 @@ class ToolTip:
         self._hide_tooltip()
 
     def _show_tooltip(self) -> None:
-        """Display the tooltip window."""
+        """Display the tooltip window, ensuring it stays within screen bounds."""
         if self.tooltip_window:
             return
 
         try:
-            x = self.widget.winfo_rootx() + 20
-            y = self.widget.winfo_rooty() + self.widget.winfo_height() + 5
-
             self.tooltip_window = tw = tk.Toplevel(self.widget)
             tw.wm_overrideredirect(True)
-            tw.wm_geometry(f"+{x}+{y}")
+            tw.attributes('-topmost', True)
 
             frame = tk.Frame(
                 tw,
@@ -100,13 +97,48 @@ class ToolTip:
                 text=self.text,
                 background="#1e293b",
                 foreground="white",
-                font=("Segoe UI", 10),
-                padx=10,
-                pady=6,
-                wraplength=300,
+                font=("Segoe UI", 11),
+                padx=12,
+                pady=8,
+                wraplength=350,
                 justify="left"
             )
             label.pack()
+
+            # Update to get accurate dimensions
+            tw.update_idletasks()
+
+            # Get tooltip dimensions
+            tooltip_width = tw.winfo_reqwidth()
+            tooltip_height = tw.winfo_reqheight()
+
+            # Get screen dimensions
+            screen_width = self.widget.winfo_screenwidth()
+            screen_height = self.widget.winfo_screenheight()
+
+            # Get widget position
+            widget_x = self.widget.winfo_rootx()
+            widget_y = self.widget.winfo_rooty()
+            widget_height = self.widget.winfo_height()
+
+            # Calculate initial position (below and to the right of widget)
+            x = widget_x + 10
+            y = widget_y + widget_height + 5
+
+            # Adjust if tooltip would go off the right edge
+            if x + tooltip_width > screen_width - 20:
+                x = screen_width - tooltip_width - 20
+
+            # Adjust if tooltip would go off the bottom edge
+            if y + tooltip_height > screen_height - 50:
+                # Show above the widget instead
+                y = widget_y - tooltip_height - 5
+
+            # Ensure minimum position
+            x = max(10, x)
+            y = max(10, y)
+
+            tw.wm_geometry(f"+{x}+{y}")
 
         except Exception as e:
             logger.debug("Failed to show tooltip: %s", e)

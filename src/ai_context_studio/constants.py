@@ -73,10 +73,41 @@ COLORS: dict[str, str] = {
     'pink': '#db2777',
     'orange': '#ea580c',
     'slate': '#475569',
+    'indigo': '#4f46e5',
+    'indigo_hover': '#4338ca',
+    'cyan': '#0891b2',
+    'cyan_hover': '#0e7490',
     'bg_dark': '#0f172a',
     'bg_card': '#ffffff',
     'text_muted': '#64748b',
     'bg_light': '#f8fafc',
+}
+
+# Font sizes - Centralized for easy adjustment
+FONTS: dict[str, int] = {
+    'title': 22,           # Main titles
+    'header': 18,          # Section headers
+    'subheader': 15,       # Subsection headers
+    'body': 13,            # Body text
+    'body_small': 12,      # Smaller body text
+    'label': 12,           # Labels and hints
+    'small': 11,           # Small text, badges
+    'button': 13,          # Button text
+    'button_large': 15,    # Large button text
+    'editor': 13,          # Editor/code text
+}
+
+# Keyboard shortcuts
+SHORTCUTS: dict[str, str] = {
+    'save': '<Control-s>',
+    'save_all': '<Control-Shift-S>',
+    'generate_all': '<Control-g>',
+    'open_folder': '<Control-o>',
+    'refresh': '<Control-r>',
+    'help': '<F1>',
+    'cancel': '<Escape>',
+    'copy': '<Control-c>',
+    'scan': '<Control-Return>',
 }
 
 # File type icons for display

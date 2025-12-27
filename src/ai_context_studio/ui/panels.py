@@ -13,7 +13,7 @@ from typing import Any
 
 import customtkinter as ctk
 
-from ..constants import COLORS
+from ..constants import COLORS, FONTS
 from ..models import FocusArea, ProjectType, SmartPreset
 from .tooltip import add_tooltip
 
@@ -74,15 +74,15 @@ class SmartPresetPanel(ctk.CTkFrame):
         ctk.CTkLabel(
             header,
             text="\U0001F3AF Configurazione Automatica",
-            font=ctk.CTkFont(size=16, weight="bold")
+            font=ctk.CTkFont(size=FONTS['header'], weight="bold")
         ).pack(anchor="w", padx=15, pady=(12, 2))
 
         ctk.CTkLabel(
             header,
             text="Non devi scrivere nessun prompt! Seleziona le opzioni e l'AI fara' il resto.",
-            font=ctk.CTkFont(size=11),
+            font=ctk.CTkFont(size=FONTS['body']),
             text_color=COLORS['text_muted'],
-            wraplength=400
+            wraplength=450
         ).pack(anchor="w", padx=15, pady=(0, 12))
 
     def _create_project_type_section(self, parent: ctk.CTkFrame) -> None:
@@ -97,13 +97,13 @@ class SmartPresetPanel(ctk.CTkFrame):
         ctk.CTkLabel(
             type_header,
             text="\U0001F4C1 Tipo di Progetto",
-            font=ctk.CTkFont(size=13, weight="bold")
+            font=ctk.CTkFont(size=FONTS['subheader'], weight="bold")
         ).pack(side="left")
 
         ctk.CTkLabel(
             type_header,
             text="Aiuta l'AI a capire il contesto",
-            font=ctk.CTkFont(size=10),
+            font=ctk.CTkFont(size=FONTS['body_small']),
             text_color=COLORS['text_muted']
         ).pack(side="right")
 
@@ -119,10 +119,10 @@ class SmartPresetPanel(ctk.CTkFrame):
                 text=f"{pt.icon} {pt.label}",
                 variable=self.project_type_var,
                 value=pt.name,
-                font=ctk.CTkFont(size=11),
+                font=ctk.CTkFont(size=FONTS['body']),
                 command=self._on_preset_change
             )
-            rb.grid(row=i // 4, column=i % 4, padx=8, pady=4, sticky="w")
+            rb.grid(row=i // 4, column=i % 4, padx=8, pady=5, sticky="w")
             add_tooltip(rb, pt.description)
 
     def _create_focus_areas_section(self, parent: ctk.CTkFrame) -> None:
@@ -137,13 +137,13 @@ class SmartPresetPanel(ctk.CTkFrame):
         ctk.CTkLabel(
             focus_header,
             text="\U0001F3AF Aree di Focus (opzionale)",
-            font=ctk.CTkFont(size=13, weight="bold")
+            font=ctk.CTkFont(size=FONTS['subheader'], weight="bold")
         ).pack(side="left")
 
         ctk.CTkLabel(
             focus_header,
             text="Seleziona per enfatizzare aspetti specifici",
-            font=ctk.CTkFont(size=10),
+            font=ctk.CTkFont(size=FONTS['body_small']),
             text_color=COLORS['text_muted']
         ).pack(side="right")
 
@@ -159,10 +159,10 @@ class SmartPresetPanel(ctk.CTkFrame):
                 focus_grid,
                 text=f"{fa.value[0]} {fa.value[1]}",
                 variable=var,
-                font=ctk.CTkFont(size=11),
+                font=ctk.CTkFont(size=FONTS['body']),
                 command=self._on_preset_change
             )
-            cb.grid(row=i // 3, column=i % 3, padx=8, pady=4, sticky="w")
+            cb.grid(row=i // 3, column=i % 3, padx=8, pady=5, sticky="w")
             add_tooltip(cb, fa.value[2])
 
     def _create_audience_section(self, parent: ctk.CTkFrame) -> None:
@@ -176,7 +176,7 @@ class SmartPresetPanel(ctk.CTkFrame):
         ctk.CTkLabel(
             aud_header,
             text="\U0001F465 Chi usera' questa documentazione?",
-            font=ctk.CTkFont(size=13, weight="bold")
+            font=ctk.CTkFont(size=FONTS['subheader'], weight="bold")
         ).pack(side="left")
 
         audiences = [
@@ -190,7 +190,9 @@ class SmartPresetPanel(ctk.CTkFrame):
         self.audience_combo = ctk.CTkComboBox(
             audience_frame,
             values=audiences,
-            width=380,
+            width=420,
+            height=36,
+            font=ctk.CTkFont(size=FONTS['body']),
             command=lambda _: self._on_preset_change()
         )
         self.audience_combo.set(audiences[0])
@@ -201,29 +203,61 @@ class SmartPresetPanel(ctk.CTkFrame):
         )
 
     def _create_notes_section(self, parent: ctk.CTkFrame) -> None:
-        """Create additional notes section."""
+        """Create additional notes section with expanded suggestions."""
         notes_frame = ctk.CTkFrame(parent)
         notes_frame.pack(fill="x", pady=8)
 
         notes_header = ctk.CTkFrame(notes_frame, fg_color="transparent")
-        notes_header.pack(fill="x", padx=12, pady=(12, 5))
+        notes_header.pack(fill="x", padx=12, pady=(12, 8))
 
         ctk.CTkLabel(
             notes_header,
-            text="\U0001F4DD Note Specifiche (opzionale)",
-            font=ctk.CTkFont(size=13, weight="bold")
+            text="\U0001F4DD Istruzioni Personalizzate (opzionale)",
+            font=ctk.CTkFont(size=FONTS['subheader'], weight="bold")
         ).pack(side="left")
+
+        # Suggestion examples - more readable
+        suggestions_frame = ctk.CTkFrame(notes_frame, fg_color=COLORS['bg_light'], corner_radius=8)
+        suggestions_frame.pack(fill="x", padx=12, pady=(0, 10))
+
+        ctk.CTkLabel(
+            suggestions_frame,
+            text="\U0001F4A1 Esempi di istruzioni utili:",
+            font=ctk.CTkFont(size=FONTS['body'], weight="bold"),
+            text_color=COLORS['primary']
+        ).pack(anchor="w", padx=12, pady=(10, 6))
+
+        examples = [
+            "Il progetto usa SQLAlchemy come ORM, documenta le query e i modelli",
+            "Enfatizza le API REST e i pattern di autenticazione JWT",
+            "Ignora i file di test, concentrati sulla logica core",
+            "Aggiungi esempi di codice per ogni endpoint API",
+            "Documenta le variabili d'ambiente necessarie per il deploy",
+        ]
+
+        for ex in examples:
+            ctk.CTkLabel(
+                suggestions_frame,
+                text=f"  \u2022  {ex}",
+                font=ctk.CTkFont(size=FONTS['body_small']),
+                text_color=COLORS['text_muted'],
+                anchor="w"
+            ).pack(anchor="w", padx=12, pady=2)
+
+        ctk.CTkLabel(suggestions_frame, text="").pack(pady=4)  # Spacer
 
         self.notes_text = ctk.CTkTextbox(
             notes_frame,
-            height=50,
-            font=ctk.CTkFont(size=11)
+            height=90,
+            font=ctk.CTkFont(size=FONTS['body'])
         )
         self.notes_text.pack(fill="x", padx=12, pady=(0, 12))
-        self.notes_text.insert(
-            "1.0",
-            "Es: Il progetto usa un ORM custom, documentare bene le query..."
+
+        self._notes_placeholder = (
+            "Scrivi qui istruzioni specifiche per l'AI...\n"
+            "Es: Documenta in dettaglio il sistema di caching Redis usato nel progetto."
         )
+        self.notes_text.insert("1.0", self._notes_placeholder)
         self.notes_text.configure(text_color=COLORS['text_muted'])
         self.notes_text.bind("<FocusIn>", self._clear_placeholder)
         self.notes_text.bind("<FocusOut>", self._restore_placeholder)
@@ -236,13 +270,13 @@ class SmartPresetPanel(ctk.CTkFrame):
         ctk.CTkLabel(
             preview_frame,
             text="\U0001F441\uFE0F Anteprima Configurazione",
-            font=ctk.CTkFont(size=13, weight="bold")
+            font=ctk.CTkFont(size=FONTS['subheader'], weight="bold")
         ).pack(anchor="w", padx=12, pady=(12, 5))
 
         self.preview_text = ctk.CTkTextbox(
             preview_frame,
-            height=80,
-            font=ctk.CTkFont(family="Consolas", size=10),
+            height=90,
+            font=ctk.CTkFont(family="Consolas", size=FONTS['small']),
             state="disabled",
             fg_color=COLORS['bg_light']
         )
@@ -251,7 +285,7 @@ class SmartPresetPanel(ctk.CTkFrame):
     def _clear_placeholder(self, event: Any = None) -> None:
         """Clear placeholder text on focus."""
         content = self.notes_text.get("1.0", "end-1c")
-        if content.startswith("Es:"):
+        if content.startswith("Scrivi qui") or content.startswith("Es:"):
             self.notes_text.delete("1.0", "end")
             self.notes_text.configure(text_color="black")
 
@@ -259,10 +293,7 @@ class SmartPresetPanel(ctk.CTkFrame):
         """Restore placeholder if notes are empty."""
         content = self.notes_text.get("1.0", "end-1c").strip()
         if not content:
-            self.notes_text.insert(
-                "1.0",
-                "Es: Il progetto usa un ORM custom, documentare bene le query..."
-            )
+            self.notes_text.insert("1.0", self._notes_placeholder)
             self.notes_text.configure(text_color=COLORS['text_muted'])
 
     def _on_preset_change(self) -> None:
@@ -294,7 +325,7 @@ class SmartPresetPanel(ctk.CTkFrame):
         focus_areas = [fa for fa, var in self._focus_vars.items() if var.get()]
 
         notes = self.notes_text.get("1.0", "end-1c").strip()
-        if notes.startswith("Es:"):
+        if notes.startswith("Scrivi qui") or notes.startswith("Es:"):
             notes = ""
 
         return SmartPreset(
@@ -332,14 +363,14 @@ class GuidePanel(ctk.CTkFrame):
         ctk.CTkLabel(
             header,
             text="\U0001F4DA Come Usare AI Context Studio",
-            font=ctk.CTkFont(size=18, weight="bold"),
+            font=ctk.CTkFont(size=FONTS['title'], weight="bold"),
             text_color="white"
         ).pack(pady=(15, 5))
 
         ctk.CTkLabel(
             header,
             text="Segui questi 3 semplici passi per generare documentazione professionale",
-            font=ctk.CTkFont(size=12),
+            font=ctk.CTkFont(size=FONTS['body']),
             text_color="#e2e8f0"
         ).pack(pady=(0, 15))
 
@@ -359,14 +390,16 @@ class GuidePanel(ctk.CTkFrame):
                 "2\uFE0F\u20E3",
                 "Seleziona Progetto",
                 "Clicca 'Sfoglia' e seleziona la cartella root del tuo progetto.\n"
-                "L'app analizzera' automaticamente tutti i file di codice supportati.",
+                "L'app analizzera' automaticamente tutti i file di codice supportati.\n"
+                "Puoi selezionare/deselezionare i file con il tasto destro del mouse.",
                 COLORS['teal']
             ),
             (
                 "3\uFE0F\u20E3",
                 "Genera Documentazione",
-                "Vai alla tab 'Generatore' e clicca sui pulsanti dei documenti.\n"
-                "'GENERA TUTTI' crea tutti i 7 documenti in sequenza automaticamente!",
+                "Vai alla tab 'Generatore' e seleziona i documenti da creare.\n"
+                "Puoi generare singoli documenti o tutti gli 11 tipi disponibili.\n"
+                "L'app riconosce automaticamente documentazione esistente!",
                 COLORS['success']
             ),
         ]
@@ -395,23 +428,23 @@ class GuidePanel(ctk.CTkFrame):
         ctk.CTkLabel(
             step_header,
             text=icon,
-            font=ctk.CTkFont(size=24)
-        ).pack(side="left", padx=(0, 10))
+            font=ctk.CTkFont(size=28)
+        ).pack(side="left", padx=(0, 12))
 
         ctk.CTkLabel(
             step_header,
             text=title,
-            font=ctk.CTkFont(size=14, weight="bold"),
+            font=ctk.CTkFont(size=FONTS['subheader'], weight="bold"),
             text_color=color
         ).pack(side="left")
 
         ctk.CTkLabel(
             step_card,
             text=desc,
-            font=ctk.CTkFont(size=11),
+            font=ctk.CTkFont(size=FONTS['body']),
             text_color=COLORS['text_muted'],
             justify="left",
-            wraplength=450
+            wraplength=500
         ).pack(anchor="w", padx=15, pady=(0, 15))
 
     def _create_tips_section(self) -> None:
@@ -425,23 +458,24 @@ class GuidePanel(ctk.CTkFrame):
 
         ctk.CTkLabel(
             tips_frame,
-            text="\U0001F4A1 Suggerimenti",
-            font=ctk.CTkFont(size=13, weight="bold")
+            text="\U0001F4A1 Suggerimenti e Scorciatoie",
+            font=ctk.CTkFont(size=FONTS['subheader'], weight="bold")
         ).pack(anchor="w", padx=15, pady=(12, 5))
 
         tips = [
-            "Usa 'Smart Presets' per ottenere documentazione ottimizzata per il tuo tipo di progetto",
-            "Per progetti grandi, usa 'Genera Tutti' che lavora in sequenza senza sovraccaricare l'AI",
-            "I documenti generati vengono salvati automaticamente in /docs nella root del progetto",
-            "Puoi modificare i documenti nella tab 'Documenti' prima di salvarli"
+            "Usa le 'Istruzioni Personalizzate' per guidare l'AI su aspetti specifici",
+            "Seleziona/Deseleziona file multipli nella tabella con tasto destro",
+            "L'app rileva automaticamente i file .md esistenti e li aggiorna",
+            "I documenti vengono salvati nella cartella /docs del progetto",
+            "Ctrl+O apri cartella, Ctrl+G genera tutti, Ctrl+S salva, F1 guida"
         ]
 
         for tip in tips:
             ctk.CTkLabel(
                 tips_frame,
                 text=f"\u2022 {tip}",
-                font=ctk.CTkFont(size=10),
+                font=ctk.CTkFont(size=FONTS['body_small']),
                 text_color=COLORS['text_muted']
-            ).pack(anchor="w", padx=15, pady=1)
+            ).pack(anchor="w", padx=15, pady=2)
 
         ctk.CTkLabel(tips_frame, text="").pack(pady=5)  # Spacer

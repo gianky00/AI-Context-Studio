@@ -13,7 +13,7 @@ import time
 from typing import Callable, Optional
 
 from .config import ConfigManager
-from .models import GenerationResult, GenerationType, SmartPreset
+from .models import ExistingDoc, GenerationResult, GenerationType, SmartPreset
 from .prompt_engine import PromptEngine
 from .token_estimator import TokenEstimator
 
@@ -167,7 +167,8 @@ class GeminiAPIClient:
         code_content: str,
         doc_type: GenerationType,
         smart_preset: Optional[SmartPreset] = None,
-        progress_callback: Optional[ProgressCallback] = None
+        progress_callback: Optional[ProgressCallback] = None,
+        existing_doc: Optional[ExistingDoc] = None
     ) -> GenerationResult:
         """
         Generate documentation using the AI model.
@@ -178,6 +179,7 @@ class GeminiAPIClient:
             doc_type: Type of documentation to generate.
             smart_preset: Optional preset configuration.
             progress_callback: Optional callback for progress updates.
+            existing_doc: Optional existing documentation to update.
 
         Returns:
             GenerationResult with the generated content or error.
@@ -185,8 +187,10 @@ class GeminiAPIClient:
         start_time = time.time()
         last_error = ""
 
+        action = "Updating" if existing_doc else "Starting generation"
         logger.info(
-            "Starting generation: %s with model %s",
+            "%s: %s with model %s",
+            action,
             doc_type.label,
             model_name
         )
@@ -199,7 +203,8 @@ class GeminiAPIClient:
                     doc_type=doc_type,
                     smart_preset=smart_preset,
                     progress_callback=progress_callback,
-                    attempt=attempt
+                    attempt=attempt,
+                    existing_doc=existing_doc
                 )
 
                 if result.success:
@@ -246,7 +251,8 @@ class GeminiAPIClient:
         doc_type: GenerationType,
         smart_preset: Optional[SmartPreset],
         progress_callback: Optional[ProgressCallback],
-        attempt: int
+        attempt: int,
+        existing_doc: Optional[ExistingDoc] = None
     ) -> GenerationResult:
         """
         Attempt a single generation.
@@ -258,6 +264,7 @@ class GeminiAPIClient:
             smart_preset: Preset configuration.
             progress_callback: Progress callback.
             attempt: Current attempt number.
+            existing_doc: Optional existing documentation to update.
 
         Returns:
             GenerationResult from this attempt.
@@ -270,16 +277,19 @@ class GeminiAPIClient:
             )
 
         # Update progress
+        action_verb = "Aggiornamento" if existing_doc else "Generazione"
         if progress_callback:
             if attempt > 0:
                 msg = f"\U0001F504 Tentativo {attempt + 1}/{self.MAX_RETRIES}..."
                 progress_callback(msg, 30)
             else:
-                msg = f"\U0001F680 Generazione {doc_type.label}..."
+                msg = f"\U0001F680 {action_verb} {doc_type.label}..."
                 progress_callback(msg, 20)
 
-        # Build prompt
-        prompt = PromptEngine.build_prompt(doc_type, code_content, smart_preset)
+        # Build prompt with existing doc context
+        prompt = PromptEngine.build_prompt(
+            doc_type, code_content, smart_preset, existing_doc
+        )
 
         if progress_callback:
             progress_callback("\u23F3 Elaborazione AI in corso...", 50)
