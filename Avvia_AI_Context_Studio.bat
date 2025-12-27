@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 REM ══════════════════════════════════════════════════════════════════════════════
 REM  AI Context Studio - Windows Launcher
 REM  Autore: Giancarlo Allegretti
@@ -66,20 +67,6 @@ if errorlevel 1 (
     echo    ✅ google-generativeai installato
 ) else (
     echo    ✅ google-generativeai presente
-)
-
-REM Controlla cryptography (opzionale)
-python -c "import cryptography" >nul 2>&1
-if errorlevel 1 (
-    echo    📦 Installazione cryptography (cifratura API Key)...
-    pip install cryptography --quiet
-    if errorlevel 1 (
-        echo    ⚠️ cryptography non installato (opzionale, API Key in chiaro)
-    ) else (
-        echo    ✅ cryptography installato
-    )
-) else (
-    echo    ✅ cryptography presente
 )
 
 echo.
