@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir:*)",
+      "Bash(python -m pytest:*)",
+      "Bash(dir \"C:\\\\Users\\\\gianc\\\\Desktop\\\\SCRIPT\\\\AI-Context-Studio\\\\*.py\")",
+      "Bash(python -m src.ai_context_studio:*)",
+      "Bash(python:*)",
+      "Bash(start \"\" \"ai_context_studio.pyw\")",
+      "Bash(timeout /t 3)",
+      "Bash(tasklist:*)",
+      "Bash(findstr:*)",
+      "Bash(move ai_context_studio.pyw launcher.pyw)",
+      "Bash(timeout:*)",
+      "Bash(cat:*)"
+    ]
+  }
+}
