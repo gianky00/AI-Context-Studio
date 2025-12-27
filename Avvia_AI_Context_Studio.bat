@@ -98,8 +98,5 @@ if not exist "%~dp0src\ai_context_studio\main.py" (
     exit /b 1
 )
 
-start "" pythonw -m ai_context_studio.main
-
-REM Chiudi questa finestra dopo 2 secondi
-timeout /t 2 /nobreak >nul
-exit
+python -m ai_context_studio.main
+pause
