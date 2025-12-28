@@ -15,6 +15,7 @@ import os
 import time
 import tkinter as tk
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox
 from typing import Any, Callable, Optional
@@ -32,8 +33,15 @@ from ..models import (
     ScanResult,
     SmartPreset,
 )
+from ..prompt_engine import PromptEngine
 from ..scanner import FastFileScanner
-from ..token_estimator import TokenEstimator
+from ..token_estimator import (
+    TokenEstimator,
+    CostCalculator,
+    CostHistoryManager,
+    Currency,
+    ModelRegistry,
+)
 from .event_queue import UIEventQueue
 from .file_tree import OptimizedFileTree
 from .panels import SmartPresetPanel
@@ -44,6 +52,203 @@ logger = logging.getLogger(__name__)
 # Type aliases
 StatusCallback = Callable[[str, str], None]
 ProgressCallback = Callable[[str, int], None]
+
+
+class CostHistoryWindow(ctk.CTkToplevel):
+    """
+    Modal window displaying cost history and statistics.
+    """
+
+    def __init__(
+        self,
+        parent: Any,
+        history_manager: CostHistoryManager,
+        currency: Currency
+    ) -> None:
+        super().__init__(parent)
+
+        self.history_manager = history_manager
+        self.currency = currency
+
+        self.title("Storico Costi - AI Context Studio")
+        self.geometry("800x600")
+        self.transient(parent.winfo_toplevel())
+        self.grab_set()
+
+        # Center the window
+        self.update_idletasks()
+        x = (self.winfo_screenwidth() - 800) // 2
+        y = (self.winfo_screenheight() - 600) // 2
+        self.geometry(f"800x600+{x}+{y}")
+
+        self._setup_ui()
+
+    def _setup_ui(self) -> None:
+        """Set up the modal UI."""
+        # Header
+        header = ctk.CTkFrame(self, fg_color="transparent")
+        header.pack(fill="x", padx=20, pady=(20, 10))
+
+        ctk.CTkLabel(
+            header,
+            text="\U0001F4C8 Storico Generazioni",
+            font=ctk.CTkFont(size=18, weight="bold")
+        ).pack(side="left")
+
+        # Stats summary
+        stats_frame = ctk.CTkFrame(self)
+        stats_frame.pack(fill="x", padx=20, pady=10)
+
+        stats_inner = ctk.CTkFrame(stats_frame, fg_color="transparent")
+        stats_inner.pack(fill="x", padx=15, pady=15)
+
+        # Get statistics
+        entries = self.history_manager.get_entries(100)
+        total_30d = self.history_manager.get_total_spend(self.currency.value, 30)
+        total_7d = self.history_manager.get_total_spend(self.currency.value, 7)
+        accuracy = self.history_manager.get_accuracy_stats()
+        symbol = self.currency.symbol
+
+        # Stat cards
+        stat_configs = [
+            ("\U0001F4CA Generazioni", str(len(entries)), "Totali"),
+            (f"\U0001F4B0 Ultimi 7gg", f"{symbol}{total_7d:.3f}", "Spesa recente"),
+            (f"\U0001F4B5 Ultimi 30gg", f"{symbol}{total_30d:.3f}", "Spesa mensile"),
+            ("\U0001F3AF Precisione", f"{accuracy['average']:.1%}", f"{accuracy['count']} campioni"),
+        ]
+
+        for i, (title, value, subtitle) in enumerate(stat_configs):
+            card = ctk.CTkFrame(stats_inner, width=180, height=80)
+            card.grid(row=0, column=i, padx=8, pady=5)
+            card.grid_propagate(False)
+
+            ctk.CTkLabel(
+                card,
+                text=title,
+                font=ctk.CTkFont(size=FONTS['body_small']),
+                text_color=COLORS['text_muted']
+            ).pack(pady=(12, 2))
+
+            ctk.CTkLabel(
+                card,
+                text=value,
+                font=ctk.CTkFont(size=16, weight="bold")
+            ).pack()
+
+            ctk.CTkLabel(
+                card,
+                text=subtitle,
+                font=ctk.CTkFont(size=FONTS['small']),
+                text_color=COLORS['text_muted']
+            ).pack()
+
+        # History table
+        table_frame = ctk.CTkFrame(self)
+        table_frame.pack(fill="both", expand=True, padx=20, pady=10)
+
+        ctk.CTkLabel(
+            table_frame,
+            text="Ultime Generazioni",
+            font=ctk.CTkFont(size=14, weight="bold")
+        ).pack(anchor="w", padx=15, pady=(15, 10))
+
+        # Scrollable list
+        scroll_frame = ctk.CTkScrollableFrame(
+            table_frame,
+            fg_color="transparent"
+        )
+        scroll_frame.pack(fill="both", expand=True, padx=15, pady=(0, 15))
+
+        if not entries:
+            ctk.CTkLabel(
+                scroll_frame,
+                text="Nessuna generazione registrata.\nI costi verranno tracciati automaticamente.",
+                font=ctk.CTkFont(size=FONTS['body']),
+                text_color=COLORS['text_muted']
+            ).pack(pady=40)
+        else:
+            # Table header
+            header_row = ctk.CTkFrame(scroll_frame, fg_color=COLORS['bg_light'], corner_radius=6)
+            header_row.pack(fill="x", pady=(0, 5))
+
+            headers = ["Data", "Modello", "Token Est.", "Token Reali", "Costo"]
+            widths = [140, 160, 100, 100, 100]
+
+            for col, (h, w) in enumerate(zip(headers, widths)):
+                ctk.CTkLabel(
+                    header_row,
+                    text=h,
+                    font=ctk.CTkFont(size=FONTS['body_small'], weight="bold"),
+                    width=w
+                ).grid(row=0, column=col, padx=5, pady=8)
+
+            # Data rows (most recent first)
+            for entry in reversed(entries[-50:]):
+                row = ctk.CTkFrame(scroll_frame, fg_color="transparent")
+                row.pack(fill="x", pady=2)
+
+                # Parse timestamp
+                try:
+                    dt = datetime.fromisoformat(entry.timestamp)
+                    date_str = dt.strftime("%d/%m/%Y %H:%M")
+                except:
+                    date_str = entry.timestamp[:16]
+
+                # Format values
+                actual_tokens_str = f"{entry.actual_tokens:,}" if entry.actual_tokens else "-"
+                actual_cost_str = f"{symbol}{entry.actual_cost:.4f}" if entry.actual_cost else f"~{symbol}{entry.estimated_cost:.4f}"
+
+                values = [
+                    date_str,
+                    entry.model_id.replace("gemini-", ""),
+                    f"{entry.estimated_tokens:,}",
+                    actual_tokens_str,
+                    actual_cost_str
+                ]
+
+                for col, (v, w) in enumerate(zip(values, widths)):
+                    ctk.CTkLabel(
+                        row,
+                        text=v,
+                        font=ctk.CTkFont(size=FONTS['body_small']),
+                        width=w,
+                        text_color=COLORS['text_muted'] if col == 0 else None
+                    ).grid(row=0, column=col, padx=5, pady=4)
+
+        # Footer buttons
+        footer = ctk.CTkFrame(self, fg_color="transparent")
+        footer.pack(fill="x", padx=20, pady=(0, 20))
+
+        ctk.CTkButton(
+            footer,
+            text="\U0001F5D1 Cancella Storico",
+            font=ctk.CTkFont(size=FONTS['body_small']),
+            fg_color=COLORS['danger'],
+            hover_color=COLORS['danger_hover'],
+            width=140,
+            height=36,
+            command=self._clear_history
+        ).pack(side="left")
+
+        ctk.CTkButton(
+            footer,
+            text="Chiudi",
+            font=ctk.CTkFont(size=FONTS['body_small']),
+            fg_color=COLORS['slate'],
+            width=100,
+            height=36,
+            command=self.destroy
+        ).pack(side="right")
+
+    def _clear_history(self) -> None:
+        """Clear all history after confirmation."""
+        from tkinter import messagebox
+        if messagebox.askyesno(
+            "Conferma",
+            "Vuoi eliminare tutto lo storico dei costi?\nQuesta azione non puo' essere annullata."
+        ):
+            self.history_manager.clear()
+            self.destroy()
 
 
 class SetupTab(ctk.CTkFrame):
@@ -88,6 +293,11 @@ class SetupTab(ctk.CTkFrame):
         self._executor = ThreadPoolExecutor(max_workers=2)
         self._scanning = False
 
+        # Financial Dashboard
+        self._current_currency = Currency.EUR
+        self._cost_calculator = CostCalculator(default_currency=self._current_currency)
+        self._cost_history = CostHistoryManager()
+
         self._setup_ui()
         self._load_initial_state()
 
@@ -96,6 +306,7 @@ class SetupTab(ctk.CTkFrame):
         self._create_api_section()
         self._create_project_section()
         self._create_stats_section()
+        self._create_financial_section()
         self._create_file_tree_section()
 
     def _create_api_section(self) -> None:
@@ -308,6 +519,238 @@ class SetupTab(ctk.CTkFrame):
             self.stat_cards[key] = value_label
             add_tooltip(card, tooltip_text)
 
+    def _create_financial_section(self) -> None:
+        """Create financial dashboard section with cost estimation."""
+        finance_section = ctk.CTkFrame(self)
+        finance_section.pack(fill="x", padx=20, pady=10)
+
+        # Header row with title and currency selector
+        finance_header = ctk.CTkFrame(finance_section, fg_color="transparent")
+        finance_header.pack(fill="x", padx=15, pady=(15, 10))
+
+        ctk.CTkLabel(
+            finance_header,
+            text="\U0001F4B0 Financial Dashboard",
+            font=ctk.CTkFont(size=FONTS['header'], weight="bold")
+        ).pack(side="left")
+
+        # Currency selector
+        currency_frame = ctk.CTkFrame(finance_header, fg_color="transparent")
+        currency_frame.pack(side="right")
+
+        ctk.CTkLabel(
+            currency_frame,
+            text="Valuta:",
+            font=ctk.CTkFont(size=FONTS['body_small']),
+            text_color=COLORS['text_muted']
+        ).pack(side="left", padx=(0, 8))
+
+        self.currency_selector = ctk.CTkSegmentedButton(
+            currency_frame,
+            values=["EUR", "USD"],
+            command=self._on_currency_change,
+            font=ctk.CTkFont(size=FONTS['body_small']),
+            width=120
+        )
+        self.currency_selector.set("EUR")
+        self.currency_selector.pack(side="left")
+        # Note: CTkSegmentedButton doesn't support tooltips
+
+        # Cost cards row
+        cost_grid = ctk.CTkFrame(finance_section, fg_color="transparent")
+        cost_grid.pack(fill="x", padx=15, pady=(0, 10))
+
+        # Card 1: Costo Stimato (current model - Flash by default)
+        self.cost_card_flash = self._create_cost_card(
+            cost_grid, 0,
+            "\u26A1 Flash",
+            "Gemini Flash (economico)",
+            COLORS['success']
+        )
+
+        # Card 2: Costo Pro
+        self.cost_card_pro = self._create_cost_card(
+            cost_grid, 1,
+            "\U0001F31F Pro",
+            "Gemini Pro (potente)",
+            COLORS['primary']
+        )
+
+        # Card 3: Risparmio
+        self.cost_card_savings = self._create_cost_card(
+            cost_grid, 2,
+            "\U0001F4B5 Risparmio",
+            "Quanto risparmi con Flash",
+            "#10b981"
+        )
+
+        # Card 4: Storico Totale
+        self.cost_card_total = self._create_cost_card(
+            cost_grid, 3,
+            "\U0001F4CA Totale 30gg",
+            "Spesa totale ultimi 30 giorni",
+            COLORS['warning']
+        )
+
+        # History button
+        history_btn_frame = ctk.CTkFrame(finance_section, fg_color="transparent")
+        history_btn_frame.pack(fill="x", padx=15, pady=(0, 15))
+
+        self.history_btn = ctk.CTkButton(
+            history_btn_frame,
+            text="\U0001F4C8 Vedi Storico Costi",
+            font=ctk.CTkFont(size=FONTS['body_small']),
+            fg_color=COLORS['slate'],
+            hover_color="#475569",
+            height=32,
+            width=160,
+            command=self._show_cost_history
+        )
+        self.history_btn.pack(side="left")
+        add_tooltip(self.history_btn, "Visualizza lo storico delle generazioni e i costi")
+
+        # Info label
+        ctk.CTkLabel(
+            history_btn_frame,
+            text="I costi si aggiornano automaticamente quando selezioni/deselezioni file",
+            font=ctk.CTkFont(size=FONTS['small']),
+            text_color=COLORS['text_muted']
+        ).pack(side="right")
+
+        # Initialize cost display
+        self._update_cost_display()
+
+    def _create_cost_card(
+        self,
+        parent: ctk.CTkFrame,
+        column: int,
+        title: str,
+        tooltip_text: str,
+        accent_color: str
+    ) -> dict[str, ctk.CTkLabel]:
+        """Create a cost card widget."""
+        card = ctk.CTkFrame(parent, width=180, height=90)
+        card.grid(row=0, column=column, padx=8, pady=5)
+        card.grid_propagate(False)
+
+        # Title with accent bar
+        title_frame = ctk.CTkFrame(card, fg_color="transparent")
+        title_frame.pack(fill="x", padx=10, pady=(10, 4))
+
+        accent_bar = ctk.CTkFrame(title_frame, width=4, height=16, fg_color=accent_color, corner_radius=2)
+        accent_bar.pack(side="left", padx=(0, 6))
+
+        ctk.CTkLabel(
+            title_frame,
+            text=title,
+            font=ctk.CTkFont(size=FONTS['body_small']),
+            text_color=COLORS['text_muted']
+        ).pack(side="left")
+
+        # Value
+        value_label = ctk.CTkLabel(
+            card,
+            text="--",
+            font=ctk.CTkFont(size=18, weight="bold")
+        )
+        value_label.pack()
+
+        # Subtitle
+        subtitle_label = ctk.CTkLabel(
+            card,
+            text="",
+            font=ctk.CTkFont(size=FONTS['small']),
+            text_color=COLORS['text_muted']
+        )
+        subtitle_label.pack()
+
+        add_tooltip(card, tooltip_text)
+
+        return {"value": value_label, "subtitle": subtitle_label, "card": card}
+
+    def _on_currency_change(self, value: str) -> None:
+        """Handle currency change."""
+        self._current_currency = Currency[value]
+        self._cost_calculator = CostCalculator(default_currency=self._current_currency)
+        self._update_cost_display()
+
+    def _update_cost_display(self) -> None:
+        """Update the financial dashboard with current costs."""
+        if not self._scan_result:
+            self.cost_card_flash["value"].configure(text="--")
+            self.cost_card_flash["subtitle"].configure(text="Scansiona un progetto")
+            self.cost_card_pro["value"].configure(text="--")
+            self.cost_card_pro["subtitle"].configure(text="")
+            self.cost_card_savings["value"].configure(text="--")
+            self.cost_card_savings["subtitle"].configure(text="")
+        else:
+            # Get current token count
+            included = self.file_tree.get_included_files()
+            total_size = sum(f.size for f in included)
+            tokens = total_size // TOKEN_FACTOR
+
+            # Calculate costs for Flash
+            flash_estimate = self._cost_calculator.calculate_from_tokens(
+                tokens, "gemini-1.5-flash", self._current_currency
+            )
+
+            # Calculate costs for Pro
+            pro_estimate = self._cost_calculator.calculate_from_tokens(
+                tokens, "gemini-1.5-pro", self._current_currency
+            )
+
+            # Update Flash card
+            self.cost_card_flash["value"].configure(
+                text=flash_estimate.format_cost(),
+                text_color=COLORS['success']
+            )
+            self.cost_card_flash["subtitle"].configure(
+                text=f"~{flash_estimate.total_tokens:,} token"
+            )
+
+            # Update Pro card
+            self.cost_card_pro["value"].configure(
+                text=pro_estimate.format_cost(),
+                text_color=COLORS['primary']
+            )
+            self.cost_card_pro["subtitle"].configure(
+                text=f"~{pro_estimate.total_tokens:,} token"
+            )
+
+            # Calculate savings
+            savings = pro_estimate.total_cost - flash_estimate.total_cost
+            if savings > 0:
+                savings_pct = (savings / pro_estimate.total_cost) * 100 if pro_estimate.total_cost > 0 else 0
+                self.cost_card_savings["value"].configure(
+                    text=flash_estimate.format_cost(savings),
+                    text_color="#10b981"
+                )
+                self.cost_card_savings["subtitle"].configure(
+                    text=f"-{savings_pct:.0f}% con Flash"
+                )
+            else:
+                self.cost_card_savings["value"].configure(text="--")
+                self.cost_card_savings["subtitle"].configure(text="")
+
+        # Update total spend (always show)
+        currency_str = self._current_currency.value
+        total_spend = self._cost_history.get_total_spend(currency_str, days=30)
+        symbol = self._current_currency.symbol
+
+        if total_spend < 0.01:
+            total_str = f"{symbol}0.00"
+        elif total_spend < 1:
+            total_str = f"{symbol}{total_spend:.3f}"
+        else:
+            total_str = f"{symbol}{total_spend:.2f}"
+
+        self.cost_card_total["value"].configure(text=total_str)
+        self.cost_card_total["subtitle"].configure(text="ultimi 30 giorni")
+
+    def _show_cost_history(self) -> None:
+        """Show cost history modal window."""
+        CostHistoryWindow(self, self._cost_history, self._current_currency)
+
     def _create_file_tree_section(self) -> None:
         """Create file tree section."""
         tree_section = ctk.CTkFrame(self)
@@ -321,6 +764,23 @@ class SetupTab(ctk.CTkFrame):
             text="\U0001F333 File Trovati",
             font=ctk.CTkFont(size=FONTS['header'], weight="bold")
         ).pack(side="left")
+
+        # Export context bundle button
+        self.export_bundle_btn = ctk.CTkButton(
+            tree_header,
+            text="\U0001F4E6 Esporta Context Bundle",
+            font=ctk.CTkFont(size=FONTS['body_small']),
+            fg_color=COLORS['primary'],
+            hover_color="#2563eb",
+            height=32,
+            width=180,
+            command=self._export_context_bundle
+        )
+        self.export_bundle_btn.pack(side="right")
+        add_tooltip(
+            self.export_bundle_btn,
+            "Esporta tutti i file selezionati in un unico file .txt per AI"
+        )
 
         self.file_tree = OptimizedFileTree(tree_section)
         self.file_tree.pack(fill="both", expand=True, padx=15, pady=(5, 15))
@@ -489,7 +949,9 @@ class SetupTab(ctk.CTkFrame):
         self.stat_cards["size"].configure(text=size_str)
         self.stat_cards["tokens"].configure(text=f"{tokens:,}")
 
-        usage = TokenEstimator.calculate_usage_percentage(tokens, "gemini-1.5-pro")
+        # Calculate context usage percentage
+        model = ModelRegistry.get_model("gemini-1.5-pro")
+        usage = (tokens / model.context_window) * 100 if model.context_window > 0 else 0
         if usage < 50:
             color = COLORS['success']
         elif usage < 80:
@@ -497,6 +959,9 @@ class SetupTab(ctk.CTkFrame):
         else:
             color = COLORS['danger']
         self.stat_cards["context"].configure(text=f"{usage:.1f}%", text_color=color)
+
+        # Update financial dashboard
+        self._update_cost_display()
 
     def get_scan_result(self) -> Optional[ScanResult]:
         """Get the current scan result."""
@@ -519,6 +984,102 @@ class SetupTab(ctk.CTkFrame):
                     for inc in included
                 )
             self.scanner.read_files(self._scan_result, progress_callback)
+
+    def _export_context_bundle(self) -> None:
+        """Export all selected files as a single context bundle file."""
+        if not self._scan_result:
+            self._on_status_update("\u26A0\uFE0F Scansiona prima un progetto", "warning")
+            return
+
+        included_files = self.file_tree.get_included_files()
+        if not included_files:
+            self._on_status_update("\u26A0\uFE0F Nessun file selezionato", "warning")
+            return
+
+        # Ask for save location
+        save_path = filedialog.asksaveasfilename(
+            title="Salva Context Bundle",
+            defaultextension=".txt",
+            filetypes=[
+                ("Text files", "*.txt"),
+                ("Markdown files", "*.md"),
+                ("All files", "*.*")
+            ],
+            initialfile="context_bundle.txt"
+        )
+
+        if not save_path:
+            return
+
+        try:
+            # Read file contents if not already read
+            self.read_file_contents()
+
+            # Build the bundle content
+            bundle_parts: list[str] = []
+
+            # Header
+            project_name = self._scan_result.root_path.name if self._scan_result.root_path else "Project"
+            bundle_parts.append(f"# Context Bundle: {project_name}")
+            bundle_parts.append(f"# Generated by AI Context Studio")
+            bundle_parts.append(f"# Files: {len(included_files)}")
+            bundle_parts.append(f"# Total size: {sum(f.size for f in included_files):,} bytes")
+            bundle_parts.append("")
+            bundle_parts.append("=" * 80)
+            bundle_parts.append("")
+
+            # File index
+            bundle_parts.append("## FILE INDEX")
+            bundle_parts.append("")
+            for i, f in enumerate(included_files, 1):
+                bundle_parts.append(f"{i}. {f.relative_path}")
+            bundle_parts.append("")
+            bundle_parts.append("=" * 80)
+            bundle_parts.append("")
+
+            # File contents
+            for f in included_files:
+                bundle_parts.append(f"## FILE: {f.relative_path}")
+                bundle_parts.append(f"## Path: {f.path}")
+                bundle_parts.append(f"## Size: {f.size:,} bytes")
+                bundle_parts.append("")
+
+                # Determine language for code block
+                ext = Path(f.relative_path).suffix.lower()
+                lang_map = {
+                    '.py': 'python', '.js': 'javascript', '.ts': 'typescript',
+                    '.jsx': 'jsx', '.tsx': 'tsx', '.java': 'java',
+                    '.c': 'c', '.cpp': 'cpp', '.h': 'c', '.hpp': 'cpp',
+                    '.cs': 'csharp', '.go': 'go', '.rs': 'rust',
+                    '.rb': 'ruby', '.php': 'php', '.swift': 'swift',
+                    '.kt': 'kotlin', '.scala': 'scala', '.r': 'r',
+                    '.sql': 'sql', '.html': 'html', '.css': 'css',
+                    '.scss': 'scss', '.json': 'json', '.xml': 'xml',
+                    '.yaml': 'yaml', '.yml': 'yaml', '.md': 'markdown',
+                    '.sh': 'bash', '.bat': 'batch', '.ps1': 'powershell',
+                }
+                lang = lang_map.get(ext, '')
+
+                bundle_parts.append(f"```{lang}")
+                content = self._scan_result.content_map.get(f.relative_path, "[Content not loaded]")
+                bundle_parts.append(content)
+                bundle_parts.append("```")
+                bundle_parts.append("")
+                bundle_parts.append("-" * 80)
+                bundle_parts.append("")
+
+            # Write to file
+            bundle_content = "\n".join(bundle_parts)
+            Path(save_path).write_text(bundle_content, encoding='utf-8')
+
+            self._on_status_update(
+                f"\u2705 Context Bundle salvato: {Path(save_path).name}",
+                "success"
+            )
+
+        except Exception as e:
+            logger.error("Failed to export context bundle: %s", e)
+            self._on_status_update(f"\u274C Errore esportazione: {e}", "error")
 
     def is_api_connected(self) -> bool:
         """Check if API is connected."""
@@ -570,6 +1131,7 @@ class GeneratorTab(ctk.CTkFrame):
         self._executor = ThreadPoolExecutor(max_workers=1)
         self._generating = False
         self._cancel_generation = False
+        self._last_errors: list[tuple[str, str]] = []  # List of (doc_type, error_message)
 
         self._setup_ui()
 
@@ -668,10 +1230,26 @@ class GeneratorTab(ctk.CTkFrame):
             hover_color=COLORS['success_hover'],
             command=self._start_bundle_generation
         )
-        self.bundle_btn.pack(fill="x", padx=12, pady=(0, 12))
+        self.bundle_btn.pack(fill="x", padx=12, pady=(0, 8))
         add_tooltip(
             self.bundle_btn,
             f"Genera tutti gli {num_docs} tipi di documento in sequenza - Scorciatoia: Ctrl+G"
+        )
+
+        # Preview prompt button
+        self.preview_prompt_btn = ctk.CTkButton(
+            bundle_section,
+            text="\U0001F50D Anteprima Prompt",
+            height=32,
+            font=ctk.CTkFont(size=FONTS['body_small']),
+            fg_color=COLORS['slate'],
+            hover_color="#475569",
+            command=self._show_prompt_preview
+        )
+        self.preview_prompt_btn.pack(fill="x", padx=12, pady=(0, 12))
+        add_tooltip(
+            self.preview_prompt_btn,
+            "Visualizza il prompt completo che verra' inviato all'API"
         )
 
     def _create_single_generators(self, parent: ctk.CTkFrame) -> None:
@@ -820,6 +1398,8 @@ class GeneratorTab(ctk.CTkFrame):
 
         self._set_generating_state(True)
         self._cancel_generation = False
+        self._last_errors = []  # Clear previous errors
+        self.error_btn.pack_forget()  # Hide error button
         self._on_status_update(
             f"\U0001F680 Generazione di {len(selected)} documenti...",
             "info"
@@ -870,6 +1450,19 @@ class GeneratorTab(ctk.CTkFrame):
                     self.event_queue.put(self._on_generation_complete, result)
                 else:
                     failed += 1
+                    # Show brief message in status bar
+                    brief_msg = result.error_message[:80] + "..." if len(result.error_message) > 80 else result.error_message
+                    self.event_queue.put(
+                        self._on_status_update,
+                        f"\u26A0\uFE0F {doc_type.label} fallito: {brief_msg}",
+                        "warning"
+                    )
+                    # Save error for later viewing
+                    self.event_queue.put(
+                        self._add_error,
+                        doc_type.label,
+                        result.error_message
+                    )
 
                 if i < total_docs - 1:
                     time.sleep(1)
@@ -912,6 +1505,93 @@ class GeneratorTab(ctk.CTkFrame):
             command=self._cancel_current_generation
         )
 
+        # Error details button (initially hidden)
+        self.error_btn = ctk.CTkButton(
+            status_section,
+            text="\u26A0\uFE0F Vedi Errori",
+            width=130,
+            height=34,
+            font=ctk.CTkFont(size=FONTS['body_small']),
+            fg_color=COLORS['warning'],
+            hover_color="#d97706",
+            command=self._show_errors_dialog
+        )
+
+    def _show_errors_dialog(self) -> None:
+        """Show dialog with all error details."""
+        if not self._last_errors:
+            return
+
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Dettagli Errori")
+        dialog.geometry("700x400")
+        dialog.transient(self.winfo_toplevel())
+        dialog.grab_set()
+
+        # Center the dialog
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() - 700) // 2
+        y = (dialog.winfo_screenheight() - 400) // 2
+        dialog.geometry(f"700x400+{x}+{y}")
+
+        # Title
+        ctk.CTkLabel(
+            dialog,
+            text=f"Errori durante la generazione ({len(self._last_errors)})",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            text_color=COLORS['danger']
+        ).pack(pady=(15, 10))
+
+        # Build error text
+        error_text = ""
+        for doc_type, error_msg in self._last_errors:
+            error_text += f"{'='*60}\n"
+            error_text += f"DOCUMENTO: {doc_type}\n"
+            error_text += f"{'='*60}\n"
+            error_text += f"{error_msg}\n\n"
+
+        # Scrollable textbox
+        textbox = ctk.CTkTextbox(
+            dialog,
+            font=ctk.CTkFont(family="Consolas", size=11),
+            wrap="word"
+        )
+        textbox.pack(fill="both", expand=True, padx=20, pady=10)
+        textbox.insert("1.0", error_text)
+        textbox.configure(state="disabled")
+
+        # Buttons
+        btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        btn_frame.pack(pady=(5, 15))
+
+        def copy_errors():
+            dialog.clipboard_clear()
+            dialog.clipboard_append(error_text)
+            copy_btn.configure(text="Copiato!")
+            dialog.after(1500, lambda: copy_btn.configure(text="Copia Tutto"))
+
+        copy_btn = ctk.CTkButton(
+            btn_frame,
+            text="Copia Tutto",
+            command=copy_errors,
+            width=120
+        )
+        copy_btn.pack(side="left", padx=5)
+
+        ctk.CTkButton(
+            btn_frame,
+            text="Chiudi",
+            command=dialog.destroy,
+            width=100,
+            fg_color=COLORS['slate']
+        ).pack(side="left", padx=5)
+
+    def _add_error(self, doc_type: str, error_message: str) -> None:
+        """Add an error to the list and show the error button."""
+        self._last_errors.append((doc_type, error_message))
+        if not self.error_btn.winfo_ismapped():
+            self.error_btn.pack(pady=(5, 10))
+
     def _load_models_from_cache(self) -> None:
         """Load cached models list."""
         cached = self.config.get_cached_models()
@@ -946,6 +1626,117 @@ class GeneratorTab(ctk.CTkFrame):
             self._on_status_update(f"\u2705 {len(models)} modelli caricati", "success")
         else:
             self._on_status_update("\u274C Errore caricamento modelli", "error")
+
+    def _show_prompt_preview(self) -> None:
+        """Show a preview of the prompt that will be sent to the API."""
+        # Validate setup
+        scan_result = self.setup_tab.get_scan_result()
+        if not scan_result:
+            self._on_status_update(
+                "\u26A0\uFE0F Scansiona prima un progetto nella tab Setup",
+                "warning"
+            )
+            return
+
+        # Get selected documents or use first one for preview
+        selected = self._get_selected_generators()
+        if not selected:
+            selected = [GenerationType.ARCHITECTURE]
+
+        # Get smart preset
+        smart_preset = self.smart_preset_panel.get_preset()
+
+        # Build code content
+        code_parts: list[str] = []
+        for f in scan_result.selected_files[:10]:  # Limit for preview
+            code_parts.append(f"### File: {f.relative_path}")
+            file_content = scan_result.content_map.get(f.relative_path, "")
+            code_parts.append(f"```\n{file_content[:2000]}{'...' if len(file_content) > 2000 else ''}\n```")
+        code_content = "\n".join(code_parts)
+        if len(scan_result.selected_files) > 10:
+            code_content += f"\n... e altri {len(scan_result.selected_files) - 10} file ..."
+
+        # Build prompt for first selected type
+        doc_type = selected[0]
+        prompt = PromptEngine.build_prompt(
+            doc_type=doc_type,
+            code_content=code_content,
+            smart_preset=smart_preset
+        )
+
+        # Show dialog
+        self._show_prompt_dialog(
+            f"Anteprima Prompt: {doc_type.label}",
+            prompt,
+            len(prompt)
+        )
+
+    def _show_prompt_dialog(self, title: str, content: str, char_count: int) -> None:
+        """Show a dialog with prompt preview."""
+        dialog = ctk.CTkToplevel(self)
+        dialog.title(title)
+        dialog.geometry("900x700")
+        dialog.transient(self.winfo_toplevel())
+        dialog.grab_set()
+
+        # Center
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() - 900) // 2
+        y = (dialog.winfo_screenheight() - 700) // 2
+        dialog.geometry(f"900x700+{x}+{y}")
+
+        # Header
+        header = ctk.CTkFrame(dialog, fg_color="transparent")
+        header.pack(fill="x", padx=20, pady=(15, 10))
+
+        ctk.CTkLabel(
+            header,
+            text=title,
+            font=ctk.CTkFont(size=14, weight="bold")
+        ).pack(side="left")
+
+        ctk.CTkLabel(
+            header,
+            text=f"{char_count:,} caratteri",
+            font=ctk.CTkFont(size=12),
+            text_color=COLORS['text_muted']
+        ).pack(side="right")
+
+        # Textbox
+        textbox = ctk.CTkTextbox(
+            dialog,
+            font=ctk.CTkFont(family="Consolas", size=11),
+            wrap="word"
+        )
+        textbox.pack(fill="both", expand=True, padx=20, pady=10)
+        textbox.insert("1.0", content)
+        textbox.configure(state="disabled")
+
+        # Buttons
+        btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        btn_frame.pack(pady=(0, 15))
+
+        def copy_prompt():
+            dialog.clipboard_clear()
+            dialog.clipboard_append(content)
+            copy_btn.configure(text="Copiato!")
+            dialog.after(1500, lambda: copy_btn.configure(text="Copia Prompt"))
+
+        copy_btn = ctk.CTkButton(
+            btn_frame,
+            text="Copia Prompt",
+            command=copy_prompt,
+            width=120
+        )
+        copy_btn.pack(side="left", padx=5)
+
+        ctk.CTkButton(
+            btn_frame,
+            text="Chiudi",
+            fg_color=COLORS['slate'],
+            command=dialog.destroy,
+            width=100
+        ).pack(side="left", padx=5)
 
     def _validate_and_prepare(
         self
@@ -1074,6 +1865,8 @@ class GeneratorTab(ctk.CTkFrame):
 
         self._set_generating_state(True)
         self._cancel_generation = False
+        self._last_errors = []  # Clear previous errors
+        self.error_btn.pack_forget()  # Hide error button
         self._on_status_update(
             f"\U0001F680 {action} {gen_type.label} in corso...",
             "info"
@@ -1110,10 +1903,14 @@ class GeneratorTab(ctk.CTkFrame):
             )
         else:
             self.gen_status.configure(text="\u274C Errore")
+            brief_msg = result.error_message[:80] + "..." if len(result.error_message) > 80 else result.error_message
             self._on_status_update(
-                f"\u274C Errore: {result.error_message[:80]}...",
+                f"\u274C Errore: {brief_msg}",
                 "error"
             )
+            # Save error and show button
+            self._last_errors = [(result.doc_type.label, result.error_message)]
+            self.error_btn.pack(pady=(5, 10))
 
         self._on_generation_complete(result)
 
@@ -1135,6 +1932,8 @@ class GeneratorTab(ctk.CTkFrame):
 
         self._set_generating_state(True)
         self._cancel_generation = False
+        self._last_errors = []  # Clear previous errors
+        self.error_btn.pack_forget()  # Hide error button
         self._on_status_update(
             f"\U0001F680 Generazione completa avviata ({total_docs} documenti)...",
             "info"
@@ -1184,10 +1983,18 @@ class GeneratorTab(ctk.CTkFrame):
                     self.event_queue.put(self._on_generation_complete, result)
                 else:
                     failed += 1
+                    # Show brief message in status bar
+                    brief_msg = result.error_message[:80] + "..." if len(result.error_message) > 80 else result.error_message
                     self.event_queue.put(
                         self._on_status_update,
-                        f"\u26A0\uFE0F {doc_type.label} fallito: {result.error_message[:50]}...",
+                        f"\u26A0\uFE0F {doc_type.label} fallito: {brief_msg}",
                         "warning"
+                    )
+                    # Save error for later viewing
+                    self.event_queue.put(
+                        self._add_error,
+                        doc_type.label,
+                        result.error_message
                     )
 
                 if i < total_docs - 1:
@@ -1417,6 +2224,20 @@ class PreviewTab(ctk.CTkFrame):
         clear_btn.pack(side="left", padx=5)
         add_tooltip(clear_btn, "Elimina tutti i documenti generati")
 
+        # Mermaid diagrams button
+        mermaid_btn = ctk.CTkButton(
+            btn_row,
+            text="\U0001F4CA Diagrammi",
+            width=120,
+            height=42,
+            font=ctk.CTkFont(size=FONTS['button']),
+            fg_color="#8b5cf6",
+            hover_color="#7c3aed",
+            command=self._view_mermaid_diagrams
+        )
+        mermaid_btn.pack(side="left", padx=5)
+        add_tooltip(mermaid_btn, "Visualizza i diagrammi Mermaid nel browser")
+
     def add_result(self, result: GenerationResult) -> None:
         """
         Add a generation result.
@@ -1563,3 +2384,164 @@ class PreviewTab(ctk.CTkFrame):
                     "\U0001F5D1\uFE0F Documenti eliminati",
                     "info"
                 )
+
+    def _view_mermaid_diagrams(self) -> None:
+        """Extract Mermaid diagrams from documents and view them in browser."""
+        import re
+        import tempfile
+        import webbrowser
+
+        # Collect all mermaid blocks from all documents
+        mermaid_blocks: list[tuple[str, str]] = []
+
+        for filename, content in self._results.items():
+            # Find all mermaid code blocks
+            pattern = r'```mermaid\s*([\s\S]*?)```'
+            matches = re.findall(pattern, content)
+            for match in matches:
+                mermaid_blocks.append((filename, match.strip()))
+
+        if not mermaid_blocks:
+            self._on_status_update(
+                "\u26A0\uFE0F Nessun diagramma Mermaid trovato nei documenti",
+                "warning"
+            )
+            return
+
+        # Generate HTML with Mermaid rendering
+        html_content = self._generate_mermaid_html(mermaid_blocks)
+
+        # Save to temp file and open in browser
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode='w',
+                suffix='.html',
+                delete=False,
+                encoding='utf-8'
+            ) as f:
+                f.write(html_content)
+                temp_path = f.name
+
+            webbrowser.open(f'file://{temp_path}')
+            self._on_status_update(
+                f"\u2705 Aperti {len(mermaid_blocks)} diagrammi nel browser",
+                "success"
+            )
+        except Exception as e:
+            logger.error("Failed to open mermaid diagrams: %s", e)
+            self._on_status_update(f"\u274C Errore: {e}", "error")
+
+    def _generate_mermaid_html(
+        self,
+        diagrams: list[tuple[str, str]]
+    ) -> str:
+        """Generate HTML page with Mermaid diagrams."""
+        diagrams_html = ""
+        for i, (filename, diagram) in enumerate(diagrams, 1):
+            diagrams_html += f'''
+            <div class="diagram-card">
+                <h3>Diagramma {i} - {filename}</h3>
+                <div class="mermaid">
+{diagram}
+                </div>
+                <details>
+                    <summary>Mostra codice sorgente</summary>
+                    <pre><code>{diagram}</code></pre>
+                </details>
+            </div>
+            '''
+
+        return f'''<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Diagrammi Mermaid - AI Context Studio</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+            min-height: 100vh;
+            padding: 40px 20px;
+        }}
+        .container {{
+            max-width: 1200px;
+            margin: 0 auto;
+        }}
+        h1 {{
+            color: white;
+            text-align: center;
+            margin-bottom: 10px;
+            font-size: 2.5rem;
+        }}
+        .subtitle {{
+            color: #94a3b8;
+            text-align: center;
+            margin-bottom: 40px;
+        }}
+        .diagram-card {{
+            background: white;
+            border-radius: 16px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+        }}
+        .diagram-card h3 {{
+            color: #1e293b;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #e2e8f0;
+        }}
+        .mermaid {{
+            display: flex;
+            justify-content: center;
+            padding: 20px;
+            background: #f8fafc;
+            border-radius: 8px;
+            margin-bottom: 15px;
+        }}
+        details {{
+            margin-top: 15px;
+        }}
+        summary {{
+            cursor: pointer;
+            color: #3b82f6;
+            font-weight: 500;
+        }}
+        pre {{
+            background: #1e293b;
+            color: #e2e8f0;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 10px;
+            overflow-x: auto;
+            font-size: 0.9rem;
+        }}
+        .footer {{
+            text-align: center;
+            color: #64748b;
+            margin-top: 40px;
+            padding: 20px;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Diagrammi Mermaid</h1>
+        <p class="subtitle">Generato da AI Context Studio - {len(diagrams)} diagrammi trovati</p>
+        {diagrams_html}
+        <div class="footer">
+            <p>AI Context Studio - Knowledge Base Generator per AI Agents</p>
+        </div>
+    </div>
+    <script>
+        mermaid.initialize({{
+            startOnLoad: true,
+            theme: 'default',
+            securityLevel: 'loose'
+        }});
+    </script>
+</body>
+</html>'''

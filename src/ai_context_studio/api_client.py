@@ -136,8 +136,14 @@ class GeminiAPIClient:
         try:
             self._available_models = []
 
+            # Models that require special tools and can't be used for text generation
+            excluded_patterns = ['computer-use', 'imagen', 'embedding', 'aqa']
+
             for model in genai.list_models():
                 if 'generateContent' in model.supported_generation_methods:
+                    # Skip models that require special tools
+                    if any(pattern in model.name.lower() for pattern in excluded_patterns):
+                        continue
                     self._available_models.append(model.name)
 
             # Sort by priority (newer models first)

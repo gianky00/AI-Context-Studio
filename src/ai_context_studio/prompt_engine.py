@@ -70,7 +70,8 @@ REGOLE FONDAMENTALI:
         doc_type: GenerationType,
         code_content: str,
         smart_preset: Optional[SmartPreset] = None,
-        existing_doc: Optional[ExistingDoc] = None
+        existing_doc: Optional[ExistingDoc] = None,
+        use_custom_prompts: bool = True
     ) -> str:
         """
         Build a complete prompt for documentation generation.
@@ -80,6 +81,7 @@ REGOLE FONDAMENTALI:
             code_content: Source code to analyze.
             smart_preset: Optional preset configuration.
             existing_doc: Optional existing documentation to update.
+            use_custom_prompts: Whether to use custom prompts if available.
 
         Returns:
             Complete prompt string.
@@ -88,7 +90,17 @@ REGOLE FONDAMENTALI:
         if not cls.GENERATION_PROMPTS:
             cls._init_prompts()
 
-        parts: list[str] = [cls.BASE_SYSTEM_PROMPT]
+        # Get system prompt (custom or default)
+        if use_custom_prompts:
+            from .custom_prompts import get_custom_prompts_manager
+            prompts_mgr = get_custom_prompts_manager()
+            system_prompt = prompts_mgr.get_system_prompt()
+            specific_prompt = prompts_mgr.get_prompt(doc_type)
+        else:
+            system_prompt = cls.BASE_SYSTEM_PROMPT
+            specific_prompt = cls.GENERATION_PROMPTS[doc_type]
+
+        parts: list[str] = [system_prompt]
 
         if smart_preset:
             parts.append("\n=== CONTESTO PROGETTO ===")
@@ -100,7 +112,7 @@ REGOLE FONDAMENTALI:
             parts.append(cls._get_existing_doc_context(existing_doc))
 
         parts.append("\n=== ISTRUZIONI SPECIFICHE ===")
-        parts.append(cls.GENERATION_PROMPTS[doc_type])
+        parts.append(specific_prompt)
 
         parts.append("\n=== CODICE SORGENTE DA ANALIZZARE ===")
         parts.append(code_content)

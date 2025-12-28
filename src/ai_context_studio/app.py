@@ -20,8 +20,10 @@ from .constants import APP_AUTHOR, APP_NAME, APP_VERSION, COLORS, FONTS, SHORTCU
 from .models import GenerationResult
 from .ui.event_queue import UIEventQueue
 from .ui.panels import GuidePanel
+from .ui.settings_tab import SettingsTab
 from .ui.tabs import GeneratorTab, PreviewTab, SetupTab
 from .ui.tooltip import add_tooltip
+from .ui.visualizer_tab import VisualizerTab
 
 logger = logging.getLogger(__name__)
 
@@ -202,6 +204,22 @@ class AIContextStudioApp(ctk.CTk):
             on_status_update=self._update_status
         )
         self.preview_tab.pack(fill="both", expand=True)
+
+        # Tab 4 - Visualizer
+        self.tabview.add("\U0001F4CA Visualizer")
+        self.visualizer_tab = VisualizerTab(
+            self.tabview.tab("\U0001F4CA Visualizer"),
+            on_status_update=self._update_status
+        )
+        self.visualizer_tab.pack(fill="both", expand=True)
+
+        # Tab 5 - Settings
+        self.tabview.add("\u2699\uFE0F Impostazioni")
+        self.settings_tab = SettingsTab(
+            self.tabview.tab("\u2699\uFE0F Impostazioni"),
+            on_status_update=self._update_status
+        )
+        self.settings_tab.pack(fill="both", expand=True)
 
         # Default tab for returning users
         if not self.config_manager.is_first_run():
