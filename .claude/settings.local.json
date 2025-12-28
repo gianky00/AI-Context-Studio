@@ -12,7 +12,9 @@
       "Bash(findstr:*)",
       "Bash(move ai_context_studio.pyw launcher.pyw)",
       "Bash(timeout:*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(echo:*)",
+      "Bash(pip install:*)"
     ]
   }
 }

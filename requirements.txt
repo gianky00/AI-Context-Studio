@@ -14,5 +14,9 @@ google-generativeai>=0.5.0
 # Optional: Secure API Key Storage (Recommended)
 cryptography>=41.0.0
 
+# Mermaid Visualizer (Embedded Browser)
+tkinterweb>=3.23.0
+pywebview>=4.0.0
+
 # Development/Testing (optional)
 pytest>=7.0.0
