@@ -10,9 +10,55 @@ from __future__ import annotations
 
 import logging
 import tkinter as tk
+from collections.abc import Callable
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
+
+
+def compute_tooltip_position(
+    widget_x: int,
+    widget_y: int,
+    widget_height: int,
+    tooltip_width: int,
+    tooltip_height: int,
+    screen_width: int,
+    screen_height: int,
+) -> tuple[int, int]:
+    """
+    Compute tooltip (x, y) so the window stays on screen.
+
+    Default placement is below and slightly to the right of the widget.
+    Flips left/above when that default would overflow the screen.
+    """
+    x = widget_x + 10
+    y = widget_y + widget_height + 5
+
+    if x + tooltip_width > screen_width - 20:
+        x = screen_width - tooltip_width - 20
+
+    if y + tooltip_height > screen_height - 50:
+        y = widget_y - tooltip_height - 5
+
+    x = max(10, x)
+    y = max(10, y)
+    if tooltip_width <= screen_width:
+        x = min(x, screen_width - tooltip_width)
+    if tooltip_height <= screen_height:
+        y = min(y, screen_height - tooltip_height)
+    return x, y
+
+
+def cancel_pending_show(
+    scheduled_id: Optional[str],
+    after_cancel: Callable[[str], None],
+) -> None:
+    """Cancel a pending ``after()`` tooltip show, if one is scheduled."""
+    if scheduled_id is not None:
+        try:
+            after_cancel(scheduled_id)
+        except Exception:
+            pass
 
 
 class ToolTip:
@@ -60,7 +106,11 @@ class ToolTip:
         Args:
             event: The tkinter event (unused).
         """
-        self.scheduled_id = self.widget.after(self.delay, self._show_tooltip)
+        cancel_pending_show(self.scheduled_id, self.widget.after_cancel)
+        try:
+            self.scheduled_id = self.widget.after(self.delay, self._show_tooltip)
+        except Exception:
+            self.scheduled_id = None
 
     def _on_leave(self, event: Optional[tk.Event] = None) -> None:
         """
@@ -69,9 +119,8 @@ class ToolTip:
         Args:
             event: The tkinter event (unused).
         """
-        if self.scheduled_id:
-            self.widget.after_cancel(self.scheduled_id)
-            self.scheduled_id = None
+        cancel_pending_show(self.scheduled_id, self.widget.after_cancel)
+        self.scheduled_id = None
         self._hide_tooltip()
 
     def _show_tooltip(self) -> None:
@@ -108,36 +157,15 @@ class ToolTip:
             # Update to get accurate dimensions
             tw.update_idletasks()
 
-            # Get tooltip dimensions
-            tooltip_width = tw.winfo_reqwidth()
-            tooltip_height = tw.winfo_reqheight()
-
-            # Get screen dimensions
-            screen_width = self.widget.winfo_screenwidth()
-            screen_height = self.widget.winfo_screenheight()
-
-            # Get widget position
-            widget_x = self.widget.winfo_rootx()
-            widget_y = self.widget.winfo_rooty()
-            widget_height = self.widget.winfo_height()
-
-            # Calculate initial position (below and to the right of widget)
-            x = widget_x + 10
-            y = widget_y + widget_height + 5
-
-            # Adjust if tooltip would go off the right edge
-            if x + tooltip_width > screen_width - 20:
-                x = screen_width - tooltip_width - 20
-
-            # Adjust if tooltip would go off the bottom edge
-            if y + tooltip_height > screen_height - 50:
-                # Show above the widget instead
-                y = widget_y - tooltip_height - 5
-
-            # Ensure minimum position
-            x = max(10, x)
-            y = max(10, y)
-
+            x, y = compute_tooltip_position(
+                widget_x=self.widget.winfo_rootx(),
+                widget_y=self.widget.winfo_rooty(),
+                widget_height=self.widget.winfo_height(),
+                tooltip_width=tw.winfo_reqwidth(),
+                tooltip_height=tw.winfo_reqheight(),
+                screen_width=self.widget.winfo_screenwidth(),
+                screen_height=self.widget.winfo_screenheight(),
+            )
             tw.wm_geometry(f"+{x}+{y}")
 
         except Exception as e:

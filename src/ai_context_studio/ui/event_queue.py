@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 # Import CTk only when needed (may not be available)
 try:
-    import customtkinter as ctk
+    import customtkinter as ctk  # noqa: F401
     CTK_AVAILABLE = True
 except ImportError:
     CTK_AVAILABLE = False
@@ -61,7 +61,10 @@ class UIEventQueue:
                 logger.error("Error executing queued callback: %s", e)
 
         if self._running:
-            self._root.after(50, self._poll)
+            try:
+                self._root.after(50, self._poll)
+            except Exception:
+                self._running = False
 
     def put(
         self,
@@ -77,6 +80,8 @@ class UIEventQueue:
             *args: Positional arguments to pass.
             **kwargs: Keyword arguments to pass.
         """
+        if not self._running:
+            return
         self._queue.put((callback, args, kwargs))
 
     def stop(self) -> None:

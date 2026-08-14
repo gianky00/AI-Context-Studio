@@ -5,7 +5,8 @@ Tests for constants module.
 
 from __future__ import annotations
 
-import pytest
+import re
+from pathlib import Path
 
 from ai_context_studio.constants import (
     APP_AUTHOR,
@@ -38,6 +39,14 @@ class TestAppConstants:
         for part in parts:
             assert part.isdigit()
 
+    def test_app_version_matches_pyproject(self) -> None:
+        """App version should match the packaged version in pyproject.toml."""
+        pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+        text = pyproject.read_text(encoding="utf-8")
+        match = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE)
+        assert match is not None
+        assert APP_VERSION == match.group(1)
+
     def test_app_author_is_string(self) -> None:
         """App author should be a non-empty string."""
         assert isinstance(APP_AUTHOR, str)
@@ -59,7 +68,7 @@ class TestFileConstants:
 
     def test_common_extensions_included(self) -> None:
         """Common programming file extensions should be included."""
-        common = {'.py', '.js', '.ts', '.html', '.css', '.json'}
+        common = {'.py', '.js', '.ts', '.html', '.css', '.json', '.md'}
         for ext in common:
             assert ext in SUPPORTED_EXTENSIONS
 
@@ -79,13 +88,26 @@ class TestConfigConstants:
 
     def test_config_dir_is_path(self) -> None:
         """Config directory should be a Path object."""
-        from pathlib import Path
         assert isinstance(CONFIG_DIR, Path)
+
+    def test_config_dir_is_under_home(self) -> None:
+        """Config directory should live under the user home directory."""
+        home = Path.home()
+        assert CONFIG_DIR == home / ".ai_context_studio"
+        assert CONFIG_DIR.is_relative_to(home)
 
     def test_token_factor_is_positive(self) -> None:
         """Token factor should be a positive integer."""
         assert isinstance(TOKEN_FACTOR, int)
         assert TOKEN_FACTOR > 0
+
+    def test_token_factor_equals_four(self) -> None:
+        """Token factor should be exactly 4 characters per token."""
+        assert TOKEN_FACTOR == 4
+
+    def test_max_file_size_is_positive(self) -> None:
+        """Max file size should be greater than zero."""
+        assert MAX_FILE_SIZE > 0
 
     def test_max_file_size_is_reasonable(self) -> None:
         """Max file size should be between 100KB and 10MB."""
@@ -121,6 +143,13 @@ class TestColorConstants:
         essential = {'primary', 'success', 'warning', 'danger'}
         for color_name in essential:
             assert color_name in COLORS
+
+    def test_required_colors_are_hex(self) -> None:
+        """Required color keys should be present as #hex values."""
+        hex_pattern = re.compile(r"^#[0-9A-Fa-f]{6}$")
+        for key in ("primary", "success", "danger"):
+            assert key in COLORS
+            assert hex_pattern.fullmatch(COLORS[key])
 
 
 class TestFileIcons:

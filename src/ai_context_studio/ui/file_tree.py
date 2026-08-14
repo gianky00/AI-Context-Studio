@@ -8,7 +8,6 @@ Provides a tree view of project files with selection capabilities.
 from __future__ import annotations
 
 import logging
-import os
 import tkinter as tk
 from tkinter import ttk
 from typing import Any, Callable, Optional
@@ -20,6 +19,92 @@ from ..models import FileInfo
 from .tooltip import add_tooltip
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_FILE_ICON = "\U0001F4C4"
+
+
+def _clean_path_segment(segment: str) -> str:
+    """Drop C0 (ord < 32) and DEL (ord == 127) characters from a path segment."""
+    return "".join(ch for ch in segment if not (ord(ch) < 32 or ord(ch) == 127))
+
+
+def _relative_path_segments(relative_path: str) -> list[str]:
+    """Split a relative path and keep only cleaned, non-dot segments."""
+    parts: list[str] = []
+    for raw in relative_path.replace("\\", "/").split("/"):
+        cleaned = _clean_path_segment(raw)
+        if cleaned and cleaned not in (".", ".."):
+            parts.append(cleaned)
+    return parts
+
+
+def relative_path_dir_key(relative_path: str) -> str:
+    """Return the top-level directory key used to group a file in the tree.
+
+    Files at the project root (no path separator) group under ``"."``.
+    Splits on both ``/`` and ``\\`` so POSIX-style paths group correctly on Windows.
+    Empty segments from a leading, trailing, or doubled slash are ignored,
+    as are ``.`` and ``..`` segments. C0 and DEL characters are stripped
+    from each segment before grouping.
+    """
+    parts = _relative_path_segments(relative_path)
+    return parts[0] if len(parts) > 1 else "."
+
+
+def file_icon_for_extension(extension: str) -> str:
+    """Return the tree icon for a file extension, or the default document icon."""
+    return FILE_ICONS.get(extension.lower(), _DEFAULT_FILE_ICON)
+
+
+def find_file_by_relative_path(
+    files: list[FileInfo], rel_path: str
+) -> Optional[FileInfo]:
+    """Return the first file whose ``relative_path`` matches *rel_path*."""
+    for file_info in files:
+        if file_info.relative_path == rel_path:
+            return file_info
+    return None
+
+
+def set_files_included(files: list[FileInfo], included: bool) -> None:
+    """Set the included flag on every file in *files*."""
+    for file_info in files:
+        file_info.included = included
+
+
+def toggle_files_included(files: list[FileInfo]) -> None:
+    """Invert the included flag on every file in *files*."""
+    for file_info in files:
+        file_info.included = not file_info.included
+
+
+def included_files(files: list[FileInfo]) -> list[FileInfo]:
+    """Return files marked as included."""
+    return [file_info for file_info in files if file_info.included]
+
+
+def display_name_from_relative_path(relative_path: str) -> str:
+    """Return the tree label for a file: the basename of its relative path.
+
+    Splits on both ``/`` and ``\\`` so POSIX-style paths label correctly on Windows.
+    Empty segments from a leading, trailing, or doubled slash are ignored,
+    as are ``.`` and ``..`` segments. C0 and DEL characters are stripped
+    from each segment so labels stay single-line.
+    """
+    parts = _relative_path_segments(relative_path)
+    return parts[-1] if parts else ""
+
+
+def group_files_by_directory(files: list[FileInfo]) -> dict[str, list[FileInfo]]:
+    """Group files by the top-level directory key used in the tree.
+
+    Does not filter ignored directories; the scanner already applied that.
+    """
+    dirs: dict[str, list[FileInfo]] = {}
+    for file_info in files:
+        dir_name = relative_path_dir_key(file_info.relative_path)
+        dirs.setdefault(dir_name, []).append(file_info)
+    return dirs
 
 
 class OptimizedFileTree(ctk.CTkFrame):
@@ -235,12 +320,10 @@ class OptimizedFileTree(ctk.CTkFrame):
         for item in selected:
             tags = self.tree.item(item, "tags")
             if len(tags) >= 2:
-                rel_path = tags[1]
-                for f in self._files:
-                    if f.relative_path == rel_path:
-                        f.included = not f.included
-                        self._update_item_display(item, f)
-                        break
+                file_info = find_file_by_relative_path(self._files, tags[1])
+                if file_info is not None:
+                    file_info.included = not file_info.included
+                    self._update_item_display(item, file_info)
         self._notify_change()
 
     def _set_items_included(self, items: tuple, included: bool) -> None:
@@ -254,12 +337,10 @@ class OptimizedFileTree(ctk.CTkFrame):
         for item in items:
             tags = self.tree.item(item, "tags")
             if len(tags) >= 2:
-                rel_path = tags[1]
-                for f in self._files:
-                    if f.relative_path == rel_path:
-                        f.included = included
-                        self._update_item_display(item, f)
-                        break
+                file_info = find_file_by_relative_path(self._files, tags[1])
+                if file_info is not None:
+                    file_info.included = included
+                    self._update_item_display(item, file_info)
         self._notify_change()
 
     def _update_item_display(self, item: str, file_info: FileInfo) -> None:
@@ -306,14 +387,7 @@ class OptimizedFileTree(ctk.CTkFrame):
         for item in self.tree.get_children():
             self.tree.delete(item)
 
-        # Group by directory
-        dirs: dict[str, list[FileInfo]] = {}
-        for f in files:
-            parts = f.relative_path.split(os.sep)
-            dir_name = parts[0] if len(parts) > 1 else "."
-            if dir_name not in dirs:
-                dirs[dir_name] = []
-            dirs[dir_name].append(f)
+        dirs = group_files_by_directory(files)
 
         # Add to tree
         for dir_name in sorted(dirs.keys()):
@@ -350,8 +424,8 @@ class OptimizedFileTree(ctk.CTkFrame):
             file_info: File information.
             parent: Parent tree item ID.
         """
-        display_name = os.path.basename(file_info.relative_path)
-        icon = FILE_ICONS.get(file_info.extension, '\U0001F4C4')
+        display_name = display_name_from_relative_path(file_info.relative_path)
+        icon = file_icon_for_extension(file_info.extension)
 
         # Format size
         if file_info.size >= 1024 * 1024:
@@ -392,33 +466,28 @@ class OptimizedFileTree(ctk.CTkFrame):
 
         tags = self.tree.item(item, "tags")
         if len(tags) >= 2 and tags[0] != "folder":
-            rel_path = tags[1]
-            for f in self._files:
-                if f.relative_path == rel_path:
-                    f.included = not f.included
-                    self._update_item_display(item, f)
-                    break
+            file_info = find_file_by_relative_path(self._files, tags[1])
+            if file_info is not None:
+                file_info.included = not file_info.included
+                self._update_item_display(item, file_info)
 
         self._notify_change()
 
     def _select_all(self) -> None:
         """Select all files."""
-        for f in self._files:
-            f.included = True
+        set_files_included(self._files, True)
         self.load_files(self._files)
         self._notify_change()
 
     def _deselect_all(self) -> None:
         """Deselect all files."""
-        for f in self._files:
-            f.included = False
+        set_files_included(self._files, False)
         self.load_files(self._files)
         self._notify_change()
 
     def _toggle_all(self) -> None:
         """Toggle all file selections."""
-        for f in self._files:
-            f.included = not f.included
+        toggle_files_included(self._files)
         self.load_files(self._files)
         self._notify_change()
 
@@ -434,4 +503,4 @@ class OptimizedFileTree(ctk.CTkFrame):
         Returns:
             List of FileInfo objects marked as included.
         """
-        return [f for f in self._files if f.included]
+        return included_files(self._files)

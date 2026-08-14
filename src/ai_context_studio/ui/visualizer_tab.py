@@ -7,20 +7,31 @@ Professional diagram visualization with zoom, pan, and export capabilities.
 
 from __future__ import annotations
 
-import base64
+import html as html_lib
 import logging
 import re
 import tempfile
-import threading
 import webbrowser
 from pathlib import Path
 from typing import Any, Callable, Optional
 
 import customtkinter as ctk
 
-from ..constants import COLORS, FONTS
+from ..constants import COLORS
 
 logger = logging.getLogger(__name__)
+
+# Pinned Mermaid 10.9.3 (full npm dist path, not a version alias).
+# SRI is the sha512 of that exact file, matching the hash published by cdnjs
+# for mermaid.min.js 10.9.3. crossorigin="anonymous" is required for SRI.
+MERMAID_CDN_URL = "https://cdn.jsdelivr.net/npm/mermaid@10.9.3/dist/mermaid.min.js"
+MERMAID_CDN_SRI = (
+    "sha512-HvxxeyPSnbU7/x0g15v3OMxTFeADyCUnCN3iCam3BDTxgFPKxa+ujRCbFuwjE8PASDwOH5LpzFfGGNWks7tuJQ=="
+)
+MERMAID_CDN_SCRIPT_TAG = (
+    f'<script src="{MERMAID_CDN_URL}" integrity="{MERMAID_CDN_SRI}" '
+    'crossorigin="anonymous"></script>'
+)
 
 # Type aliases
 StatusCallback = Callable[[str, str], None]
@@ -35,7 +46,7 @@ except ImportError:
 
 # Try to import webview for advanced features
 try:
-    import webview
+    import webview  # noqa: F401
     WEBVIEW_AVAILABLE = True
 except ImportError:
     WEBVIEW_AVAILABLE = False
@@ -58,12 +69,15 @@ class MermaidSanitizer:
     # Characters that require quoting in node labels
     SPECIAL_CHARS = r'[;:?!@#$%^&*()+=<>|\\\'\"`,/~]'
 
-    # Problematic style patterns to remove
+    # Problematic style / interaction patterns to remove
     STYLE_PATTERNS = [
         r'^\s*style\s+\w+\s+.*$',      # style A fill:#fff...
         r'^\s*linkStyle\s+.*$',         # linkStyle 0 stroke:...
         r'^\s*classDef\s+.*$',          # classDef className...
         r'^\s*class\s+\w+\s+\w+\s*$',   # class A className
+        r'^\s*click\s+.*$',             # click A "url" / javascript: / call fn()
+        r'^\s*call\s+\S+.*$',           # call functionName (JS callback)
+        r'^\s*%%\{\s*(init|config)\b.*\}%%\s*$',  # %%{init:...}%% / %%{config:...}%%
     ]
 
     @classmethod
@@ -80,10 +94,19 @@ class MermaidSanitizer:
         if not code or not code.strip():
             return code
 
+        # Strip diagram-level config that can override mermaid.initialize()
+        # securityLevel: 'strict' (multiline wrap directives + YAML frontmatter).
+        code = re.sub(
+            r'%%\{\s*(init|config)\b.*?\}%%',
+            '',
+            code,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        code = re.sub(r'\A\s*---[ \t]*\n[\s\S]*?\n---[ \t]*\n', '', code)
+
         # Detect diagram type
         first_line = code.strip().split('\n')[0].lower()
         is_sequence = 'sequencediagram' in first_line.replace(' ', '')
-        is_flowchart = any(x in first_line for x in ['graph', 'flowchart'])
 
         lines = code.split('\n')
         sanitized_lines = []
@@ -97,7 +120,10 @@ class MermaidSanitizer:
             if is_sequence:
                 sanitized_line = cls._sanitize_sequence_line(line)
             else:
-                sanitized_line = cls._sanitize_line(line, in_subgraph)
+                try:
+                    sanitized_line = cls._sanitize_line(line, in_subgraph)
+                except (IndexError, re.error, ValueError):
+                    sanitized_line = line
             sanitized_lines.append(sanitized_line)
 
             # Track subgraph state
@@ -192,11 +218,7 @@ class MermaidSanitizer:
         def replace_paren_node(match):
             before = match.group(1)
             content = match.group(2)
-            after = match.group(3)
-
-            # If content has special meaning (decision, etc), keep as is
-            # Otherwise convert to square brackets
-            return f'{before}["{content}"]{after}'
+            return f'{before}["{content}"]'
 
         # Match A("content") or A(content) but not A((content)) or A{content}
         result = re.sub(
@@ -296,9 +318,7 @@ class MermaidSanitizer:
 
         # Handle -- label --> format (convert to pipe format)
         def convert_inline_label(match):
-            prefix = match.group(1)
             label = match.group(2).strip()
-            suffix = match.group(3)
 
             if label and not label.startswith('|'):
                 label = label.replace('"', "'")
@@ -320,7 +340,11 @@ class MermaidSanitizer:
         if not code or not code.strip():
             return False, "Codice vuoto"
 
-        lines = [l.strip() for l in code.split('\n') if l.strip() and not l.strip().startswith('%%')]
+        lines = [
+            line.strip()
+            for line in code.split('\n')
+            if line.strip() and not line.strip().startswith('%%')
+        ]
 
         if not lines:
             return False, "Nessuna istruzione valida"
@@ -347,6 +371,24 @@ class MermaidSanitizer:
             return False, f"Subgraph/end non bilanciati: {subgraph_count} subgraph, {end_count} end"
 
         return True, ""
+
+    @classmethod
+    def escape_for_html(cls, code: str) -> str:
+        """Sanitize mermaid, then HTML-escape for safe document injection."""
+        return html_lib.escape(cls.sanitize(code), quote=True)
+
+
+def iter_mermaid_fence_bodies(content: str) -> list[str]:
+    """Return mermaid fence bodies from ``` or ~~~ fences; tag is case-insensitive."""
+    return [
+        body
+        for m in re.finditer(
+            r"(`{3,}|~{3,})[ \t]*mermaid\s*([\s\S]*?)\1",
+            content,
+            flags=re.IGNORECASE,
+        )
+        if (body := m.group(2).strip())
+    ]
 
 
 class MermaidDiagram:
@@ -724,27 +766,14 @@ class VisualizerTab(ctk.CTkFrame):
         theme = theme_map.get(self.theme_combo.get(), "default")
         is_dark = theme == "dark"
 
-        # Escape the code for JavaScript embedding
-        js_escaped_code = (diagram.code
-            .replace('\\', '\\\\')
-            .replace('`', '\\`')
-            .replace('$', '\\$')
-            .replace('</', '<\\/')
-        )
-
-        # HTML escaped for display in error fallback
-        html_escaped_code = (diagram.code
-            .replace('&', '&amp;')
-            .replace('<', '&lt;')
-            .replace('>', '&gt;')
-            .replace('"', '&quot;')
-        )
+        # Never inject raw AI mermaid into HTML: sanitize then escape.
+        html_escaped_code = MermaidSanitizer.escape_for_html(diagram.code)
 
         return f'''<!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
-    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    {MERMAID_CDN_SCRIPT_TAG}
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         html, body {{
@@ -816,9 +845,7 @@ class VisualizerTab(ctk.CTkFrame):
 </head>
 <body>
     <div id="container">
-        <pre class="mermaid" id="mermaid-diagram">
-{diagram.code}
-        </pre>
+        <pre class="mermaid" id="mermaid-diagram">{html_escaped_code}</pre>
     </div>
 
     <div id="error-container">
@@ -842,10 +869,10 @@ class VisualizerTab(ctk.CTkFrame):
         mermaid.initialize({{
             startOnLoad: false,
             theme: '{theme}',
-            securityLevel: 'loose',
+            securityLevel: 'strict',
             flowchart: {{
                 useMaxWidth: false,
-                htmlLabels: true,
+                htmlLabels: false,
                 curve: 'basis'
             }},
             sequence: {{
@@ -906,10 +933,8 @@ class VisualizerTab(ctk.CTkFrame):
             if widget != self.no_diagrams_label:
                 widget.destroy()
 
-        pattern = r'```mermaid\s*([\s\S]*?)```'
-
         for filename, content in results.items():
-            matches = re.findall(pattern, content)
+            matches = iter_mermaid_fence_bodies(content)
             for i, match in enumerate(matches):
                 diagram = MermaidDiagram(match, filename, i + 1)
                 self._diagrams.append(diagram)
@@ -1115,13 +1140,10 @@ class VisualizerTab(ctk.CTkFrame):
 
         diagrams_html = ""
         for i, diagram in enumerate(self._diagrams):
-            # Escape code for HTML display
-            html_escaped_code = (diagram.code
-                .replace('&', '&amp;')
-                .replace('<', '&lt;')
-                .replace('>', '&gt;')
-                .replace('"', '&quot;')
-            )
+            # Never inject raw AI mermaid into HTML: sanitize then escape.
+            html_escaped_code = MermaidSanitizer.escape_for_html(diagram.code)
+            safe_type = html_lib.escape(diagram.diagram_type, quote=True)
+            safe_source = html_lib.escape(diagram.source_file, quote=True)
 
             # Status indicator
             status_class = "" if diagram.is_valid else "has-warning"
@@ -1130,13 +1152,11 @@ class VisualizerTab(ctk.CTkFrame):
             diagrams_html += f'''
             <div class="diagram-card {status_class}" id="diagram-{i}">
                 <div class="diagram-header">
-                    <h3>{diagram.diagram_type} #{diagram.index} {status_badge}</h3>
-                    <span class="source">Da: {diagram.source_file}</span>
+                    <h3>{safe_type} #{diagram.index} {status_badge}</h3>
+                    <span class="source">Da: {safe_source}</span>
                 </div>
                 <div class="diagram-content" id="content-{i}">
-                    <pre class="mermaid" id="mermaid-{i}">
-{diagram.code}
-                    </pre>
+                    <pre class="mermaid" id="mermaid-{i}">{html_escaped_code}</pre>
                 </div>
                 <div class="error-fallback" id="error-{i}" style="display:none;">
                     <div class="error-message">
@@ -1162,7 +1182,7 @@ class VisualizerTab(ctk.CTkFrame):
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Mermaid Visualizer - AI Context Studio</title>
-    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    {MERMAID_CDN_SCRIPT_TAG}
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{
@@ -1323,8 +1343,8 @@ class VisualizerTab(ctk.CTkFrame):
         mermaid.initialize({{
             startOnLoad: false,
             theme: '{theme}',
-            securityLevel: 'loose',
-            flowchart: {{ useMaxWidth: false, htmlLabels: true }},
+            securityLevel: 'strict',
+            flowchart: {{ useMaxWidth: false, htmlLabels: false }},
             sequence: {{ useMaxWidth: false }},
             logLevel: 'error'
         }});

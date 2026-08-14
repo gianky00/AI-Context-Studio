@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ai_context_studio"
-version = "1.1.0"
+version = "2.1.0"
 description = "Desktop Application per la generazione di Knowledge Base per Agenti AI"
 authors = [
-  { name="Giancarlo Allegretti" },
+    { name="Giancarlo Allegretti" },
 ]
 readme = "README.md"
 requires-python = ">=3.9"
@@ -18,8 +18,19 @@ classifiers = [
 ]
 dependencies = [
     "customtkinter>=5.2.0",
-    "google-generativeai>=0.5.0",
+    "google-genai>=1.0.0",
     "cryptography>=41.0.0",
+    "keyring>=24.0.0",
+    "tkinterweb>=3.23.0",
+    "pywebview>=4.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "ruff>=0.8.0",
+    "mypy>=1.8.0",
+    "pre-commit>=3.5.0",
 ]
 
 [project.scripts]
@@ -27,3 +38,31 @@ ai-context-studio = "ai_context_studio.main:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.mypy]
+python_version = "3.9"
+warn_unused_ignores = true
+ignore_missing_imports = true
+# Skip following third-party packages (google-genai, mcp, pytest, ...) so
+# 3.10+ syntax in typed site-packages does not abort a Python 3.9 check.
+follow_imports = "skip"
+files = [
+    "src/ai_context_studio/constants.py",
+    "src/ai_context_studio/models.py",
+    "src/ai_context_studio/config.py",
+    "src/ai_context_studio/scanner.py",
+    "src/ai_context_studio/token_estimator.py",
+    "src/ai_context_studio/prompt_engine.py",
+    "src/ai_context_studio/custom_prompts.py",
+    "src/ai_context_studio/logging_setup.py",
+    "src/ai_context_studio/api_client.py",
+    "src/ai_context_studio/path_safety.py",
+    "src/ai_context_studio/secret_redaction.py",
+]

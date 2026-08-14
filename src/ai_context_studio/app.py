@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any
 
 import customtkinter as ctk
 
@@ -26,6 +25,44 @@ from .ui.tooltip import add_tooltip
 from .ui.visualizer_tab import VisualizerTab
 
 logger = logging.getLogger(__name__)
+
+
+def shutdown_app_workers(*objects: object) -> None:
+    """Cancel then shut down tab/worker objects.
+
+    For each object, callable ``cancel()`` is invoked first (API client),
+    then callable ``shutdown()`` (tabs). Missing methods are skipped.
+    Exceptions from either call are logged and swallowed so window close
+    cannot abort or hang. Tabs use ``ThreadPoolExecutor.shutdown(wait=False)``
+    internally.
+    """
+    for obj in objects:
+        cancel = getattr(obj, "cancel", None)
+        if callable(cancel):
+            try:
+                cancel()
+            except Exception:
+                logger.exception("Worker cancel failed")
+        shutdown = getattr(obj, "shutdown", None)
+        if callable(shutdown):
+            try:
+                shutdown()
+            except Exception:
+                logger.exception("Worker shutdown failed")
+
+
+def safe_destroy(widget: object) -> None:
+    """Call ``destroy()`` if present; log and swallow exceptions.
+
+    Tk can raise if the window is already destroyed. Close must not
+    abort on that path.
+    """
+    destroy = getattr(widget, "destroy", None)
+    if callable(destroy):
+        try:
+            destroy()
+        except Exception:
+            logger.exception("Widget destroy failed")
 
 
 class AIContextStudioApp(ctk.CTk):
@@ -56,14 +93,14 @@ class AIContextStudioApp(ctk.CTk):
         self.after(100, lambda: self.attributes('-topmost', False))
         self.focus_force()
 
-        # Theme
-        ctk.set_appearance_mode("light")
-        ctk.set_default_color_theme("blue")
-
         # Initialize core components
         self.config_manager = ConfigManager()
         self.api_client = GeminiAPIClient()
         self.event_queue = UIEventQueue(self)
+
+        # Theme (persisted; first-run default is light)
+        ctk.set_appearance_mode(self.config_manager.get_appearance_mode())
+        ctk.set_default_color_theme("blue")
 
         # Build UI
         self._setup_ui()
@@ -217,7 +254,8 @@ class AIContextStudioApp(ctk.CTk):
         self.tabview.add("\u2699\uFE0F Impostazioni")
         self.settings_tab = SettingsTab(
             self.tabview.tab("\u2699\uFE0F Impostazioni"),
-            on_status_update=self._update_status
+            on_status_update=self._update_status,
+            config=self.config_manager,
         )
         self.settings_tab.pack(fill="both", expand=True)
 
@@ -335,4 +373,12 @@ class AIContextStudioApp(ctk.CTk):
         """Handle window close event."""
         logger.info("Application closing")
         self.event_queue.stop()
-        self.destroy()
+        shutdown_app_workers(
+            getattr(self, "setup_tab", None),
+            getattr(self, "generator_tab", None),
+            getattr(self, "preview_tab", None),
+            getattr(self, "visualizer_tab", None),
+            getattr(self, "settings_tab", None),
+            getattr(self, "api_client", None),
+        )
+        safe_destroy(self)

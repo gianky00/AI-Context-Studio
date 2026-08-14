@@ -12,6 +12,7 @@ import logging
 from typing import Optional
 
 from .models import ExistingDoc, GenerationType, SmartPreset
+from .token_estimator import TokenEstimator
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,10 @@ class PromptEngine:
     Contains the base system prompt and specific prompts for each
     documentation type.
     """
+
+    PRIOR_OUTPUTS_HEADING: str = "DOCUMENTI GIÀ GENERATI IN QUESTO BUNDLE"
+    PRIOR_OUTPUT_PREVIEW_CHARS: int = 800
+    CODE_TRUNCATION_MARKER: str = "...[TRONCATO]..."
 
     BASE_SYSTEM_PROMPT: str = """
 Sei un Senior Software Architect con 20+ anni di esperienza, specializzato in "Context Engineering"
@@ -71,7 +76,8 @@ REGOLE FONDAMENTALI:
         code_content: str,
         smart_preset: Optional[SmartPreset] = None,
         existing_doc: Optional[ExistingDoc] = None,
-        use_custom_prompts: bool = True
+        use_custom_prompts: bool = True,
+        prior_outputs: Optional[list[tuple[str, str]]] = None,
     ) -> str:
         """
         Build a complete prompt for documentation generation.
@@ -82,6 +88,9 @@ REGOLE FONDAMENTALI:
             smart_preset: Optional preset configuration.
             existing_doc: Optional existing documentation to update.
             use_custom_prompts: Whether to use custom prompts if available.
+            prior_outputs: Optional (filename, content) pairs already generated
+                in the current bundle. A short preview of each is injected for
+                cross-document consistency.
 
         Returns:
             Complete prompt string.
@@ -100,6 +109,9 @@ REGOLE FONDAMENTALI:
             system_prompt = cls.BASE_SYSTEM_PROMPT
             specific_prompt = cls.GENERATION_PROMPTS[doc_type]
 
+        system_prompt = cls._neutralize_structural_headings(system_prompt)
+        specific_prompt = cls._neutralize_structural_headings(specific_prompt)
+
         parts: list[str] = [system_prompt]
 
         if smart_preset:
@@ -111,20 +123,171 @@ REGOLE FONDAMENTALI:
             parts.append("\n=== DOCUMENTAZIONE ESISTENTE ===")
             parts.append(cls._get_existing_doc_context(existing_doc))
 
+        if prior_outputs:
+            parts.append(f"\n=== {cls.PRIOR_OUTPUTS_HEADING} ===")
+            parts.append(cls.format_prior_outputs(prior_outputs))
+
         parts.append("\n=== ISTRUZIONI SPECIFICHE ===")
         parts.append(specific_prompt)
 
         parts.append("\n=== CODICE SORGENTE DA ANALIZZARE ===")
-        parts.append(code_content)
+        parts.append(cls._neutralize_structural_headings(code_content))
 
         logger.debug(
-            "Built prompt for %s: %d chars (existing doc: %s)",
+            "Built prompt for %s: %d chars (existing doc: %s, prior outputs: %d)",
             doc_type.label,
             sum(len(p) for p in parts),
-            existing_doc.filename if existing_doc else "none"
+            existing_doc.filename if existing_doc else "none",
+            len(prior_outputs) if prior_outputs else 0,
         )
 
         return "\n".join(parts)
+
+    @classmethod
+    def format_prior_outputs(
+        cls,
+        prior_outputs: Optional[list[tuple[str, str]]] = None,
+    ) -> str:
+        """Build a compact summary of documents already generated in this bundle."""
+        if not prior_outputs:
+            return ""
+
+        blocks: list[str] = [
+            "Usa questi estratti per restare coerente con i documenti già "
+            "prodotti in questo bundle. Non ripeterli per intero."
+        ]
+        preview_len = cls.PRIOR_OUTPUT_PREVIEW_CHARS
+        for filename, content in prior_outputs:
+            preview = (content or "")[:preview_len]
+            if len(content or "") > preview_len:
+                preview += "\n... [estratto troncato] ..."
+            safe_name = cls._sanitize_prior_filename(filename)
+            safe_preview = cls._neutralize_section_markers(
+                cls._strip_preview_controls(preview)
+            )
+            blocks.append(f"--- {safe_name} ---\n{safe_preview}")
+        return "\n\n".join(blocks)
+
+    @classmethod
+    def _neutralize_structural_headings(cls, text: str) -> str:
+        """Replace known prompt headings so scanned source cannot impersonate them.
+
+        Only the exact ``=== ... ===`` strings that ``build_prompt`` emits are
+        rewritten. Bare ``===`` (e.g. Markdown setext underlines) is left intact.
+        """
+        result = text or ""
+        for heading in (
+            "=== CONTESTO PROGETTO ===",
+            "=== DOCUMENTAZIONE ESISTENTE ===",
+            f"=== {cls.PRIOR_OUTPUTS_HEADING} ===",
+            "=== ISTRUZIONI SPECIFICHE ===",
+            "=== CODICE SORGENTE DA ANALIZZARE ===",
+        ):
+            result = result.replace(heading, heading.replace("===", "≡≡≡"))
+        return result
+
+    @staticmethod
+    def _strip_preview_controls(text: str) -> str:
+        """Drop C0/DEL from preview text, keeping tab/CR/LF for markdown."""
+        return "".join(
+            ch
+            for ch in (text or "")
+            if ch in "\t\n\r" or (ord(ch) >= 32 and ord(ch) != 127)
+        )
+
+    @staticmethod
+    def _neutralize_section_markers(text: str) -> str:
+        """Replace ``===`` so prior text cannot impersonate prompt headings."""
+        return (text or "").replace("===", "≡≡≡")
+
+    @staticmethod
+    def _sanitize_prior_filename(filename: str) -> str:
+        """Keep the filename on one line and strip section-heading markers."""
+        single_line = " ".join((filename or "").splitlines())
+        cleaned = "".join(ch for ch in single_line if ord(ch) >= 32 and ord(ch) != 127)
+        return PromptEngine._neutralize_section_markers(cleaned)
+
+    @classmethod
+    def truncate_code_to_context_budget(
+        cls,
+        code_content: str,
+        model_name: str,
+        extra_text: str = "",
+        limit_percent: Optional[float] = None,
+    ) -> str:
+        """
+        Return code_content unchanged if estimated tokens fit the context budget.
+
+        If (extra_text + code_content) would exceed the model's budget (default
+        80% of the context window), shrink the source around
+        ``...[TRONCATO]...`` so the remaining bundle items can still run.
+        """
+        extra = extra_text or ""
+
+        def _exceeds(text: str) -> bool:
+            tokens = TokenEstimator.estimate_tokens(extra + text)
+            exceeds, _, _ = TokenEstimator.exceeds_context_budget(
+                tokens, model_name, limit_percent
+            )
+            return exceeds
+
+        if not code_content or not _exceeds(code_content):
+            return code_content
+
+        marker = cls.CODE_TRUNCATION_MARKER
+        lo, hi = 0, len(code_content)
+        best = marker
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            if mid >= len(code_content):
+                candidate = code_content
+            elif mid <= len(marker):
+                candidate = marker
+            else:
+                keep = mid - len(marker)
+                head = keep // 2
+                tail = keep - head
+                candidate = (
+                    code_content[:head]
+                    + marker
+                    + (code_content[-tail:] if tail else "")
+                )
+            if not _exceeds(candidate):
+                best = candidate
+                lo = mid + 1
+            else:
+                hi = mid - 1
+
+        logger.warning(
+            "Truncated code payload from %d to %d chars to fit context budget",
+            len(code_content),
+            len(best),
+        )
+        return best
+
+    @classmethod
+    def build_bundle_code_payload(
+        cls,
+        code_content: str,
+        model_name: str,
+        prior_outputs: Optional[list[tuple[str, str]]] = None,
+        limit_percent: Optional[float] = None,
+    ) -> str:
+        """
+        Build the source payload for one bundle document.
+
+        The first item (no prior_outputs) keeps the full source when it fits.
+        Later items still send the source; it is truncated only if estimated
+        tokens would exceed the context budget once prior-doc summaries are
+        included.
+        """
+        extra = cls.format_prior_outputs(prior_outputs)
+        return cls.truncate_code_to_context_budget(
+            code_content,
+            model_name,
+            extra_text=extra,
+            limit_percent=limit_percent,
+        )
 
     @staticmethod
     def _get_existing_doc_context(existing_doc: ExistingDoc) -> str:
@@ -138,16 +301,17 @@ REGOLE FONDAMENTALI:
             Context string to include in the prompt.
         """
         context_parts: list[str] = []
+        safe_name = PromptEngine._sanitize_prior_filename(existing_doc.filename)
 
         if existing_doc.is_outdated:
             context_parts.append(
-                f"ATTENZIONE: Esiste gia' il file '{existing_doc.filename}' ma sembra OBSOLETO o incompleto.\n"
+                f"ATTENZIONE: Esiste gia' il file '{safe_name}' ma sembra OBSOLETO o incompleto.\n"
                 "Il tuo compito e' SOSTITUIRLO COMPLETAMENTE con una versione aggiornata e completa.\n"
                 "Mantieni la stessa struttura generale se valida, ma aggiorna tutto il contenuto.\n"
             )
         else:
             context_parts.append(
-                f"ATTENZIONE: Esiste gia' il file '{existing_doc.filename}'.\n"
+                f"ATTENZIONE: Esiste gia' il file '{safe_name}'.\n"
                 "Il tuo compito e' AGGIORNARE questa documentazione esistente:\n"
                 "- Mantieni le sezioni valide e aggiornale se necessario\n"
                 "- Aggiungi nuove sezioni per funzionalita' mancanti\n"
@@ -158,7 +322,11 @@ REGOLE FONDAMENTALI:
         # Include a preview of the existing content (truncated)
         if existing_doc.content:
             preview_length = 2000
-            content_preview = existing_doc.content[:preview_length]
+            content_preview = PromptEngine._neutralize_section_markers(
+                PromptEngine._strip_preview_controls(
+                    existing_doc.content[:preview_length]
+                )
+            )
             if len(existing_doc.content) > preview_length:
                 content_preview += "\n... [contenuto troncato] ..."
 

@@ -12,6 +12,7 @@ import logging
 from pathlib import Path
 from typing import Optional
 
+from .config import restrict_file_permissions
 from .constants import CONFIG_DIR
 from .models import GenerationType
 from .prompt_engine import PromptEngine
@@ -19,6 +20,14 @@ from .prompt_engine import PromptEngine
 logger = logging.getLogger(__name__)
 
 CUSTOM_PROMPTS_FILE: Path = CONFIG_DIR / "custom_prompts.json"
+
+
+def _sanitize_prompt_body(value: str) -> str:
+    """Drop C0/DEL controls then strip. Empty means no custom prompt."""
+    cleaned = "".join(
+        ch for ch in value if not (ord(ch) < 32 or ord(ch) == 127)
+    )
+    return cleaned.strip()
 
 
 class CustomPromptsManager:
@@ -42,10 +51,25 @@ class CustomPromptsManager:
         try:
             content = CUSTOM_PROMPTS_FILE.read_text(encoding='utf-8')
             data = json.loads(content)
-            self._custom_prompts = data.get('prompts', {})
-            self._custom_system_prompt = data.get('system_prompt')
+            prompts = data.get('prompts', {})
+            if not isinstance(prompts, dict):
+                self._custom_prompts = {}
+            else:
+                self._custom_prompts = {
+                    key: cleaned
+                    for key, value in prompts.items()
+                    if isinstance(key, str)
+                    and isinstance(value, str)
+                    and (cleaned := _sanitize_prompt_body(value))
+                }
+            system_prompt = data.get('system_prompt')
+            if system_prompt is not None and not isinstance(system_prompt, str):
+                system_prompt = None
+            if isinstance(system_prompt, str):
+                system_prompt = _sanitize_prompt_body(system_prompt) or None
+            self._custom_system_prompt = system_prompt
             logger.info("Loaded %d custom prompts", len(self._custom_prompts))
-        except (json.JSONDecodeError, OSError) as e:
+        except (json.JSONDecodeError, OSError, AttributeError) as e:
             logger.warning("Failed to load custom prompts: %s", e)
 
     def save_custom_prompts(self) -> None:
@@ -58,6 +82,7 @@ class CustomPromptsManager:
             }
             content = json.dumps(data, indent=2, ensure_ascii=False)
             CUSTOM_PROMPTS_FILE.write_text(content, encoding='utf-8')
+            restrict_file_permissions(CUSTOM_PROMPTS_FILE)
             logger.info("Saved custom prompts")
         except OSError as e:
             logger.error("Failed to save custom prompts: %s", e)
@@ -70,14 +95,15 @@ class CustomPromptsManager:
 
     def set_system_prompt(self, prompt: str) -> None:
         """Set a custom system prompt."""
-        self._custom_system_prompt = prompt if prompt.strip() else None
+        self._custom_system_prompt = _sanitize_prompt_body(prompt) or None
         self.save_custom_prompts()
 
     def get_prompt(self, gen_type: GenerationType) -> str:
         """Get prompt for a generation type (custom or default)."""
         type_key = gen_type.name
-        if type_key in self._custom_prompts:
-            return self._custom_prompts[type_key]
+        custom = self._custom_prompts.get(type_key)
+        if isinstance(custom, str) and custom.strip():
+            return custom
 
         # Return default prompt
         if not PromptEngine.GENERATION_PROMPTS:
@@ -87,8 +113,9 @@ class CustomPromptsManager:
     def set_prompt(self, gen_type: GenerationType, prompt: str) -> None:
         """Set a custom prompt for a generation type."""
         type_key = gen_type.name
-        if prompt.strip():
-            self._custom_prompts[type_key] = prompt
+        cleaned = _sanitize_prompt_body(prompt)
+        if cleaned:
+            self._custom_prompts[type_key] = cleaned
         elif type_key in self._custom_prompts:
             del self._custom_prompts[type_key]
         self.save_custom_prompts()
@@ -140,3 +167,9 @@ def get_custom_prompts_manager() -> CustomPromptsManager:
     if _custom_prompts_manager is None:
         _custom_prompts_manager = CustomPromptsManager()
     return _custom_prompts_manager
+
+
+def reset_custom_prompts_manager() -> None:
+    """Drop the global manager so tests can start from a clean state."""
+    global _custom_prompts_manager
+    _custom_prompts_manager = None

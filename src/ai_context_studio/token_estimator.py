@@ -16,13 +16,14 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
-from dataclasses import dataclass, field, asdict
-from datetime import datetime, timedelta
+from dataclasses import asdict, dataclass, field, fields
+from datetime import datetime, timedelta, timezone
 from enum import Enum
-from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, overload
 
+from .config import restrict_file_permissions
 from .constants import CONFIG_DIR
 
 logger = logging.getLogger(__name__)
@@ -128,6 +129,54 @@ class CostEstimate:
             return f"{symbol}{cost:.2f}"
 
 
+@overload
+def _coerce_finite_cost(value: Optional[float], *, fallback: None) -> Optional[float]:
+    ...
+
+
+@overload
+def _coerce_finite_cost(value: Optional[float], *, fallback: float) -> float:
+    ...
+
+
+def _coerce_finite_cost(
+    value: Optional[float], *, fallback: Optional[float]
+) -> Optional[float]:
+    """Return value if finite; otherwise fallback (None for actual, 0.0 for estimated)."""
+    if value is None:
+        return fallback
+    try:
+        if math.isfinite(value):
+            return value
+    except (TypeError, ValueError):
+        pass
+    return fallback
+
+
+@overload
+def _coerce_finite_int(value: Optional[float], *, fallback: None) -> Optional[int]:
+    ...
+
+
+@overload
+def _coerce_finite_int(value: Optional[float], *, fallback: int) -> int:
+    ...
+
+
+def _coerce_finite_int(
+    value: Optional[float], *, fallback: Optional[int]
+) -> Optional[int]:
+    """Return int(value) if finite; otherwise fallback (None for actual, 0 for estimated)."""
+    if value is None:
+        return fallback
+    try:
+        if math.isfinite(value):
+            return int(value)
+    except (TypeError, ValueError):
+        pass
+    return fallback
+
+
 @dataclass
 class CostHistoryEntry:
     """A single entry in the cost history log."""
@@ -146,7 +195,29 @@ class CostHistoryEntry:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> CostHistoryEntry:
-        return cls(**data)
+        known = {item.name for item in fields(cls)}
+        filtered = {key: value for key, value in data.items() if key in known}
+        if "actual_cost" in filtered:
+            filtered["actual_cost"] = _coerce_finite_cost(
+                filtered["actual_cost"], fallback=None
+            )
+        if "estimated_cost" in filtered:
+            filtered["estimated_cost"] = _coerce_finite_cost(
+                filtered["estimated_cost"], fallback=0.0
+            )
+        if "actual_tokens" in filtered:
+            filtered["actual_tokens"] = _coerce_finite_int(
+                filtered["actual_tokens"], fallback=None
+            )
+        if "estimated_tokens" in filtered:
+            filtered["estimated_tokens"] = _coerce_finite_int(
+                filtered["estimated_tokens"], fallback=0
+            )
+        if "accuracy_ratio" in filtered:
+            filtered["accuracy_ratio"] = _coerce_finite_cost(
+                filtered["accuracy_ratio"], fallback=None
+            )
+        return cls(**filtered)
 
 
 # =============================================================================
@@ -156,7 +227,13 @@ class CostHistoryEntry:
 class ModelRegistry:
     """
     Registry of AI models with pricing information.
-    Prices based on Google Gemini pricing (December 2024).
+
+    USD list prices per 1M tokens from the Gemini Developer API pricing page
+    (https://ai.google.dev/gemini-api/docs/pricing), retrieved 13 August 2026.
+    Standard (non-batch) text rates are used. Gemini 2.5 Pro also publishes a
+    long-context surcharge above 200k input tokens ($2.50 / $15.00); the
+    registry stores the standard <=200k tier. Historical 1.5 / 1.0 prices are
+    last published list rates and are kept so cached model names still resolve.
     """
 
     DEFAULT_EXCHANGE_RATES: dict[Currency, float] = {
@@ -167,12 +244,39 @@ class ModelRegistry:
     }
 
     MODELS: dict[str, ModelPricing] = {
+        # Source: Google AI pricing page, 13 Aug 2026. Text/image/video input.
+        "gemini-2.5-flash": ModelPricing(
+            model_id="gemini-2.5-flash",
+            display_name="Gemini 2.5 Flash",
+            input_price_per_million=0.30,
+            output_price_per_million=2.50,
+            context_window=1_048_576,
+        ),
+        # Source: Google AI pricing page, 13 Aug 2026. Standard <=200k tier
+        # ($1.25 in / $10.00 out). Prompts >200k: $2.50 / $15.00.
+        "gemini-2.5-pro": ModelPricing(
+            model_id="gemini-2.5-pro",
+            display_name="Gemini 2.5 Pro",
+            input_price_per_million=1.25,
+            output_price_per_million=10.00,
+            context_window=1_048_576,
+        ),
+        # Source: Google AI pricing page, 13 Aug 2026. Text/image/video input.
+        "gemini-2.5-flash-lite": ModelPricing(
+            model_id="gemini-2.5-flash-lite",
+            display_name="Gemini 2.5 Flash-Lite",
+            input_price_per_million=0.10,
+            output_price_per_million=0.40,
+            context_window=1_048_576,
+        ),
+        # Shut down 1 Jun 2026; last published list price $0.10 / $0.40.
         "gemini-2.0-flash": ModelPricing(
             model_id="gemini-2.0-flash",
             display_name="Gemini 2.0 Flash",
-            input_price_per_million=0.075,
-            output_price_per_million=0.30,
+            input_price_per_million=0.10,
+            output_price_per_million=0.40,
             context_window=1_048_576,
+            is_active=False,
         ),
         "gemini-2.0-flash-exp": ModelPricing(
             model_id="gemini-2.0-flash-exp",
@@ -180,7 +284,9 @@ class ModelRegistry:
             input_price_per_million=0.0,
             output_price_per_million=0.0,
             context_window=1_048_576,
+            is_active=False,
         ),
+        # Last published 1.5 Flash list price (historical; model retired).
         "gemini-1.5-flash": ModelPricing(
             model_id="gemini-1.5-flash",
             display_name="Gemini 1.5 Flash",
@@ -195,6 +301,7 @@ class ModelRegistry:
             output_price_per_million=0.15,
             context_window=1_048_576,
         ),
+        # Last published 1.5 Pro long-context list price (historical).
         "gemini-1.5-pro": ModelPricing(
             model_id="gemini-1.5-pro",
             display_name="Gemini 1.5 Pro",
@@ -202,12 +309,14 @@ class ModelRegistry:
             output_price_per_million=10.50,
             context_window=2_097_152,
         ),
+        # Superseded by GA gemini-2.5-flash; kept for cached preview names.
         "gemini-2.5-flash-preview-05-20": ModelPricing(
             model_id="gemini-2.5-flash-preview-05-20",
             display_name="Gemini 2.5 Flash Preview",
             input_price_per_million=0.15,
             output_price_per_million=0.60,
             context_window=1_048_576,
+            is_active=False,
         ),
         "gemini-1.0-pro": ModelPricing(
             model_id="gemini-1.0-pro",
@@ -215,10 +324,11 @@ class ModelRegistry:
             input_price_per_million=0.50,
             output_price_per_million=1.50,
             context_window=32_768,
+            is_active=False,
         ),
     }
 
-    DEFAULT_MODEL = "gemini-1.5-flash"
+    DEFAULT_MODEL = "gemini-2.5-flash"
 
     @classmethod
     def get_model(cls, model_name: str) -> ModelPricing:
@@ -270,6 +380,41 @@ class TokenEstimator:
     }
 
     DEFAULT_RATIO: float = 4.0
+    DEFAULT_CONTEXT_WINDOW: int = 1_048_576  # gemini-2.5-flash / ModelRegistry.DEFAULT_MODEL
+    CONTEXT_USAGE_LIMIT_PERCENT: float = 80.0
+
+    @classmethod
+    def get_context_window(cls, model_name: str) -> int:
+        """Return the context window size for a model name."""
+        return ModelRegistry.get_model(model_name).context_window
+
+    @classmethod
+    def calculate_usage_percentage(cls, tokens: int, model_name: str) -> float:
+        """Return token usage as a percentage of the model context window."""
+        window = cls.get_context_window(model_name)
+        return (tokens / window) * 100.0 if window else 0.0
+
+    @classmethod
+    def exceeds_context_budget(
+        cls,
+        tokens: int,
+        model_name: str,
+        limit_percent: Optional[float] = None,
+    ) -> tuple[bool, float, int]:
+        """
+        Check whether a token count would overflow the model context window.
+
+        Returns:
+            Tuple of (exceeds_limit, usage_percent, context_window).
+        """
+        limit = (
+            cls.CONTEXT_USAGE_LIMIT_PERCENT
+            if limit_percent is None
+            else limit_percent
+        )
+        window = cls.get_context_window(model_name)
+        usage = cls.calculate_usage_percentage(tokens, model_name)
+        return usage >= limit, usage, window
 
     @classmethod
     def detect_content_type(cls, text: str) -> ContentType:
@@ -285,7 +430,7 @@ class TokenEstimator:
             try:
                 json.loads(text)
                 return ContentType.JSON
-            except:
+            except Exception:
                 pass
 
         # Check code patterns
@@ -353,7 +498,7 @@ class CostCalculator:
         default_currency: Currency = Currency.EUR,
         custom_exchange_rates: Optional[dict[Currency, float]] = None,
         output_multiplier: float = 1.5
-    ):
+    ) -> None:
         self.default_currency = default_currency
         self.custom_exchange_rates = custom_exchange_rates
         self.output_multiplier = output_multiplier
@@ -455,13 +600,20 @@ class CostCalculator:
 # COST HISTORY MANAGER
 # =============================================================================
 
+def _as_utc(moment: datetime) -> datetime:
+    """Treat naive datetimes as UTC so mixed-tz ordering never raises."""
+    if moment.tzinfo is None:
+        return moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc)
+
+
 class CostHistoryManager:
     """Manages historical cost data for tracking and accuracy refinement."""
 
     HISTORY_FILE = CONFIG_DIR / "cost_history.json"
     MAX_ENTRIES = 1000
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._history: list[CostHistoryEntry] = []
         self._load()
 
@@ -482,10 +634,15 @@ class CostHistoryManager:
     def _save(self) -> None:
         """Save history to file."""
         try:
-            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-            entries = self._history[-self.MAX_ENTRIES:]
+            self._history = self._history[-self.MAX_ENTRIES:]
+            self.HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
             with open(self.HISTORY_FILE, 'w', encoding='utf-8') as f:
-                json.dump({"entries": [e.to_dict() for e in entries]}, f, indent=2)
+                json.dump(
+                    {"entries": [e.to_dict() for e in self._history]},
+                    f,
+                    indent=2,
+                )
+            restrict_file_permissions(self.HISTORY_FILE)
         except Exception as e:
             logger.error("Failed to save cost history: %s", e)
 
@@ -496,17 +653,30 @@ class CostHistoryManager:
         actual_cost: Optional[float] = None
     ) -> None:
         """Add a new entry to history."""
+        stored_actual_tokens = _coerce_finite_int(actual_tokens, fallback=None)
+        stored_estimated_tokens = _coerce_finite_int(
+            estimate.total_tokens, fallback=0
+        )
+
         accuracy_ratio = None
-        if actual_tokens and estimate.total_tokens > 0:
-            accuracy_ratio = actual_tokens / estimate.total_tokens
+        if (
+            stored_actual_tokens is not None
+            and estimate.total_tokens > 0
+            and math.isfinite(stored_actual_tokens)
+            and math.isfinite(estimate.total_tokens)
+        ):
+            accuracy_ratio = stored_actual_tokens / estimate.total_tokens
+
+        stored_actual = _coerce_finite_cost(actual_cost, fallback=None)
+        stored_estimated = _coerce_finite_cost(estimate.total_cost, fallback=0.0)
 
         entry = CostHistoryEntry(
             timestamp=estimate.timestamp,
             model_id=estimate.model_id,
-            estimated_tokens=estimate.total_tokens,
-            actual_tokens=actual_tokens,
-            estimated_cost=estimate.total_cost,
-            actual_cost=actual_cost,
+            estimated_tokens=stored_estimated_tokens,
+            actual_tokens=stored_actual_tokens,
+            estimated_cost=stored_estimated,
+            actual_cost=stored_actual,
             currency=estimate.currency.value,
             content_type=estimate.content_type.value,
             accuracy_ratio=accuracy_ratio,
@@ -521,14 +691,28 @@ class CostHistoryManager:
 
     def get_total_spend(self, currency: str = "EUR", days: int = 30) -> float:
         """Get total spend over a period."""
-        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+        cutoff = _as_utc(datetime.now() - timedelta(days=days))
         total = 0.0
         for entry in self._history:
-            if entry.timestamp >= cutoff and entry.currency == currency:
-                if entry.actual_cost is not None:
-                    total += entry.actual_cost
-                else:
-                    total += entry.estimated_cost
+            if entry.currency != currency:
+                continue
+            try:
+                if _as_utc(datetime.fromisoformat(entry.timestamp)) < cutoff:
+                    continue
+            except (TypeError, ValueError):
+                continue
+            cost = None
+            for candidate in (entry.actual_cost, entry.estimated_cost):
+                if candidate is None:
+                    continue
+                try:
+                    if math.isfinite(candidate):
+                        cost = candidate
+                        break
+                except TypeError:
+                    continue
+            if cost is not None:
+                total += cost
         return total
 
     def get_accuracy_stats(self, model_id: Optional[str] = None) -> dict[str, float]:
@@ -542,7 +726,20 @@ class CostHistoryManager:
         if not entries:
             return {"average": 1.0, "min": 1.0, "max": 1.0, "count": 0}
 
-        ratios = [e.accuracy_ratio for e in entries]
+        ratios: list[float] = []
+        for entry in entries:
+            ratio = entry.accuracy_ratio
+            if ratio is None:
+                continue
+            try:
+                if math.isfinite(ratio):
+                    ratios.append(ratio)
+            except TypeError:
+                continue
+
+        if not ratios:
+            return {"average": 1.0, "min": 1.0, "max": 1.0, "count": 0}
+
         return {
             "average": sum(ratios) / len(ratios),
             "min": min(ratios),

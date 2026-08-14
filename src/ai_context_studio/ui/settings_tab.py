@@ -12,13 +12,138 @@ from typing import Any, Callable, Optional
 
 import customtkinter as ctk
 
-from ..constants import COLORS, FONTS
+from ..config import ConfigManager, normalize_appearance_mode
+from ..constants import COLORS
 from ..custom_prompts import get_custom_prompts_manager
 from ..models import GenerationType
 
 logger = logging.getLogger(__name__)
 
 StatusCallback = Callable[[str, str], None]
+
+# Sidebar order for the prompt manager (all GenerationType members).
+SETTINGS_DOC_TYPES: tuple[GenerationType, ...] = (
+    GenerationType.ARCHITECTURE,
+    GenerationType.RULES,
+    GenerationType.CONTEXT,
+    GenerationType.API_DOCS,
+    GenerationType.TESTING,
+    GenerationType.SECURITY,
+    GenerationType.ONBOARDING,
+    GenerationType.DATABASE,
+    GenerationType.DEPLOYMENT,
+    GenerationType.DEPENDENCIES,
+    GenerationType.PERFORMANCE,
+)
+
+IDLE_EDITOR_TITLE = "Seleziona un prompt da modificare"
+SYSTEM_PROMPT_TITLE = "Prompt di Sistema"
+CUSTOMIZED_BADGE_LABEL = "PERSONALIZZATO"
+CUSTOMIZED_INDICATOR = "*"
+RESET_ALL_STATUS = "Tutti i prompt ripristinati"
+EMPTY_PROMPT_STATUS = "Il prompt non puo' essere vuoto"
+UNCHANGED_PROMPT_STATUS = "Nessuna modifica da salvare"
+
+
+def doc_type_list_label(doc_type: GenerationType) -> str:
+    """Return the sidebar list label for a generation type."""
+    return doc_type.label
+
+
+def customized_indicator_text(is_customized: bool) -> str:
+    """Return the sidebar marker shown next to a customized prompt."""
+    return CUSTOMIZED_INDICATOR if is_customized else ""
+
+
+def customized_badge_text(is_customized: bool) -> str:
+    """Return the editor badge label, or empty when the prompt is stock."""
+    return CUSTOMIZED_BADGE_LABEL if is_customized else ""
+
+
+def should_show_customized_badge(is_customized: bool) -> bool:
+    """Return whether the PERSONALIZZATO badge should be packed."""
+    return is_customized
+
+
+def is_editor_dirty(editor_text: str, saved_text: str) -> bool:
+    """Return True when the editor content differs from the last saved prompt."""
+    return editor_text != saved_text
+
+
+def prompt_save_error(
+    content: str,
+    saved_text: Optional[str] = None,
+) -> Optional[str]:
+    """Return a status-bar error if the editor cannot be saved, else None."""
+    without_c0 = "".join(
+        ch for ch in content
+        if (ord(ch) >= 32 or ch in "\t\n\r") and ord(ch) != 127
+    )
+    if not without_c0.strip():
+        return EMPTY_PROMPT_STATUS
+    if saved_text is not None and not is_editor_dirty(content, saved_text):
+        return UNCHANGED_PROMPT_STATUS
+    return None
+
+
+def editor_title_text(
+    doc_type: Optional[GenerationType] = None,
+    *,
+    editing_system: bool = False,
+) -> str:
+    """Return the editor header for the current prompt selection."""
+    if editing_system:
+        return SYSTEM_PROMPT_TITLE
+    if doc_type is not None:
+        return f"Prompt: {doc_type.label}"
+    return IDLE_EDITOR_TITLE
+
+
+def default_preview_title(
+    doc_type: Optional[GenerationType] = None,
+    *,
+    editing_system: bool = False,
+) -> Optional[str]:
+    """Return the default-preview dialog title, or None if nothing is selected."""
+    if editing_system:
+        return f"Default: {SYSTEM_PROMPT_TITLE}"
+    if doc_type is not None:
+        return f"Default: {doc_type.label}"
+    return None
+
+
+def char_count_label(content: str) -> str:
+    """Return the character-count footer for the prompt editor."""
+    return f"{len(content):,} caratteri"
+
+
+def save_status_message(
+    doc_type: Optional[GenerationType] = None,
+    *,
+    editing_system: bool = False,
+) -> str:
+    """Return the status-bar message after saving the current prompt."""
+    if editing_system:
+        return "Prompt di sistema salvato"
+    if doc_type is not None:
+        return f"Prompt {doc_type.label} salvato"
+    return ""
+
+
+def reset_status_message(
+    doc_type: Optional[GenerationType] = None,
+    *,
+    editing_system: bool = False,
+    reset_all: bool = False,
+) -> str:
+    """Return the status-bar message after resetting prompts."""
+    if reset_all:
+        return RESET_ALL_STATUS
+    if editing_system:
+        return "Prompt di sistema ripristinato"
+    if doc_type is not None:
+        return f"Prompt {doc_type.label} ripristinato"
+    return ""
 
 
 class SettingsTab(ctk.CTkFrame):
@@ -28,30 +153,20 @@ class SettingsTab(ctk.CTkFrame):
     Allows users to customize prompt templates.
     """
 
-    DOC_TYPES: list[GenerationType] = [
-        GenerationType.ARCHITECTURE,
-        GenerationType.RULES,
-        GenerationType.CONTEXT,
-        GenerationType.API_DOCS,
-        GenerationType.TESTING,
-        GenerationType.SECURITY,
-        GenerationType.ONBOARDING,
-        GenerationType.DATABASE,
-        GenerationType.DEPLOYMENT,
-        GenerationType.DEPENDENCIES,
-        GenerationType.PERFORMANCE,
-    ]
+    DOC_TYPES: tuple[GenerationType, ...] = SETTINGS_DOC_TYPES
 
     def __init__(
         self,
         master: Any,
         on_status_update: StatusCallback,
+        config: Optional[ConfigManager] = None,
         **kwargs: Any
     ) -> None:
         """Initialize the settings tab."""
         super().__init__(master, **kwargs)
 
         self._on_status_update = on_status_update
+        self._config = config if config is not None else ConfigManager()
         self._prompts_manager = get_custom_prompts_manager()
         self._current_doc_type: Optional[GenerationType] = None
         self._editing_system_prompt = False
@@ -60,20 +175,48 @@ class SettingsTab(ctk.CTkFrame):
 
     def _setup_ui(self) -> None:
         """Set up the tab UI."""
-        # Main container with two columns
+        # Compact appearance row, then two-column prompt editor
         self.grid_columnconfigure(1, weight=1)
-        self.grid_rowconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
 
-        # Left sidebar - prompt selector
+        self._create_appearance_row()
         self._create_sidebar()
-
-        # Right panel - editor
         self._create_editor_panel()
+
+    def _create_appearance_row(self) -> None:
+        """Create a compact Light/Dark/System appearance control."""
+        row = ctk.CTkFrame(self, fg_color="white", height=44)
+        row.grid(row=0, column=0, columnspan=2, sticky="ew", padx=15, pady=(15, 0))
+        row.grid_propagate(False)
+
+        ctk.CTkLabel(
+            row,
+            text="Aspetto",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color="#1e293b",
+        ).pack(side="left", padx=(15, 10), pady=8)
+
+        current = self._config.get_appearance_mode().title()
+        self.appearance_selector = ctk.CTkSegmentedButton(
+            row,
+            values=["Light", "Dark", "System"],
+            font=ctk.CTkFont(size=11),
+            width=240,
+        )
+        self.appearance_selector.set(current)
+        self.appearance_selector.configure(command=self._on_appearance_change)
+        self.appearance_selector.pack(side="left", pady=8)
+
+    def _on_appearance_change(self, value: str) -> None:
+        """Persist the selected appearance mode and apply it immediately."""
+        mode = normalize_appearance_mode(value)
+        self._config.set_appearance_mode(mode)
+        ctk.set_appearance_mode(mode)
 
     def _create_sidebar(self) -> None:
         """Create the prompt selector sidebar."""
         sidebar = ctk.CTkFrame(self, width=280, fg_color="#f8fafc")
-        sidebar.grid(row=0, column=0, sticky="nsw", padx=(15, 10), pady=15)
+        sidebar.grid(row=1, column=0, sticky="nsw", padx=(15, 10), pady=15)
         sidebar.grid_propagate(False)
 
         # Title
@@ -133,7 +276,9 @@ class SettingsTab(ctk.CTkFrame):
             # Indicator for customized prompts
             indicator = ctk.CTkLabel(
                 btn_frame,
-                text="*" if self._prompts_manager.is_prompt_customized(doc_type) else "",
+                text=customized_indicator_text(
+                    self._prompts_manager.is_prompt_customized(doc_type)
+                ),
                 font=ctk.CTkFont(size=14, weight="bold"),
                 text_color=COLORS['primary'],
                 width=15
@@ -142,7 +287,7 @@ class SettingsTab(ctk.CTkFrame):
 
             btn = ctk.CTkButton(
                 btn_frame,
-                text=doc_type.label,
+                text=doc_type_list_label(doc_type),
                 font=ctk.CTkFont(size=11),
                 fg_color="transparent",
                 hover_color="#e2e8f0",
@@ -168,7 +313,7 @@ class SettingsTab(ctk.CTkFrame):
     def _create_editor_panel(self) -> None:
         """Create the prompt editor panel."""
         editor_panel = ctk.CTkFrame(self, fg_color="white")
-        editor_panel.grid(row=0, column=1, sticky="nsew", padx=(0, 15), pady=15)
+        editor_panel.grid(row=1, column=1, sticky="nsew", padx=(0, 15), pady=15)
         editor_panel.grid_columnconfigure(0, weight=1)
         editor_panel.grid_rowconfigure(1, weight=1)
 
@@ -178,7 +323,7 @@ class SettingsTab(ctk.CTkFrame):
 
         self.editor_title = ctk.CTkLabel(
             header,
-            text="Seleziona un prompt da modificare",
+            text=editor_title_text(),
             font=ctk.CTkFont(size=14, weight="bold"),
             text_color="#1e293b"
         )
@@ -186,7 +331,7 @@ class SettingsTab(ctk.CTkFrame):
 
         self.customized_badge = ctk.CTkLabel(
             header,
-            text="PERSONALIZZATO",
+            text=customized_badge_text(False),
             font=ctk.CTkFont(size=10, weight="bold"),
             text_color="white",
             fg_color=COLORS['primary'],
@@ -266,7 +411,7 @@ class SettingsTab(ctk.CTkFrame):
             btn.configure(fg_color="transparent")
 
         # Update editor
-        self.editor_title.configure(text="Prompt di Sistema")
+        self.editor_title.configure(text=editor_title_text(editing_system=True))
         prompt = self._prompts_manager.get_system_prompt()
 
         self.editor.configure(state="normal")
@@ -278,11 +423,9 @@ class SettingsTab(ctk.CTkFrame):
         self.reset_btn.configure(state="normal")
         self.preview_btn.configure(state="normal")
 
-        # Update badge
-        if self._prompts_manager.is_system_prompt_customized():
-            self.customized_badge.pack(side="left", padx=10)
-        else:
-            self.customized_badge.pack_forget()
+        self._sync_customized_badge(
+            self._prompts_manager.is_system_prompt_customized()
+        )
 
         self._update_char_count()
         self.editor.bind("<KeyRelease>", lambda e: self._update_char_count())
@@ -301,7 +444,7 @@ class SettingsTab(ctk.CTkFrame):
                 btn.configure(fg_color="transparent", text_color="#1e293b")
 
         # Update editor
-        self.editor_title.configure(text=f"Prompt: {doc_type.label}")
+        self.editor_title.configure(text=editor_title_text(doc_type))
         prompt = self._prompts_manager.get_prompt(doc_type)
 
         self.editor.configure(state="normal")
@@ -313,11 +456,9 @@ class SettingsTab(ctk.CTkFrame):
         self.reset_btn.configure(state="normal")
         self.preview_btn.configure(state="normal")
 
-        # Update badge
-        if self._prompts_manager.is_prompt_customized(doc_type):
-            self.customized_badge.pack(side="left", padx=10)
-        else:
-            self.customized_badge.pack_forget()
+        self._sync_customized_badge(
+            self._prompts_manager.is_prompt_customized(doc_type)
+        )
 
         self._update_char_count()
         self.editor.bind("<KeyRelease>", lambda e: self._update_char_count())
@@ -327,48 +468,71 @@ class SettingsTab(ctk.CTkFrame):
         content = self.editor.get("1.0", "end-1c")
 
         if self._editing_system_prompt:
+            saved = self._prompts_manager.get_system_prompt()
+        elif self._current_doc_type:
+            saved = self._prompts_manager.get_prompt(self._current_doc_type)
+        else:
+            return
+
+        error = prompt_save_error(content, saved)
+        if error:
+            self._on_status_update(error, "warning")
+            return
+
+        if self._editing_system_prompt:
             self._prompts_manager.set_system_prompt(content)
-            self._on_status_update("Prompt di sistema salvato", "success")
-            if self._prompts_manager.is_system_prompt_customized():
-                self.customized_badge.pack(side="left", padx=10)
+            self._on_status_update(
+                save_status_message(editing_system=True), "success"
+            )
+            self._sync_customized_badge(
+                self._prompts_manager.is_system_prompt_customized()
+            )
         elif self._current_doc_type:
             self._prompts_manager.set_prompt(self._current_doc_type, content)
-            self._on_status_update(f"Prompt {self._current_doc_type.label} salvato", "success")
+            self._on_status_update(
+                save_status_message(self._current_doc_type), "success"
+            )
 
-            # Update indicator
+            customized = self._prompts_manager.is_prompt_customized(
+                self._current_doc_type
+            )
             _, indicator = self._doc_buttons[self._current_doc_type]
-            if self._prompts_manager.is_prompt_customized(self._current_doc_type):
-                indicator.configure(text="*")
-                self.customized_badge.pack(side="left", padx=10)
-            else:
-                indicator.configure(text="")
-                self.customized_badge.pack_forget()
+            indicator.configure(text=customized_indicator_text(customized))
+            self._sync_customized_badge(customized)
 
     def _reset_current_prompt(self) -> None:
         """Reset current prompt to default."""
         if self._editing_system_prompt:
             self._prompts_manager.reset_system_prompt()
             self._edit_system_prompt()  # Reload
-            self._on_status_update("Prompt di sistema ripristinato", "success")
+            self._on_status_update(
+                reset_status_message(editing_system=True), "success"
+            )
         elif self._current_doc_type:
             self._prompts_manager.reset_prompt(self._current_doc_type)
             self._edit_prompt(self._current_doc_type)  # Reload
 
-            # Update indicator
             _, indicator = self._doc_buttons[self._current_doc_type]
-            indicator.configure(text="")
+            indicator.configure(text=customized_indicator_text(False))
 
-            self._on_status_update(f"Prompt {self._current_doc_type.label} ripristinato", "success")
+            self._on_status_update(
+                reset_status_message(self._current_doc_type), "success"
+            )
 
     def _show_default_prompt(self) -> None:
         """Show the default prompt in a dialog."""
         if self._editing_system_prompt:
             default = self._prompts_manager.get_default_system_prompt()
-            title = "Default: Prompt di Sistema"
         elif self._current_doc_type:
             default = self._prompts_manager.get_default_prompt(self._current_doc_type)
-            title = f"Default: {self._current_doc_type.label}"
         else:
+            return
+
+        title = default_preview_title(
+            self._current_doc_type,
+            editing_system=self._editing_system_prompt,
+        )
+        if title is None:
             return
 
         self._show_prompt_dialog(title, default)
@@ -440,21 +604,29 @@ class SettingsTab(ctk.CTkFrame):
 
             # Update all indicators
             for _, indicator in self._doc_buttons.values():
-                indicator.configure(text="")
+                indicator.configure(text=customized_indicator_text(False))
 
             # Clear editor
             self.editor.configure(state="normal")
             self.editor.delete("1.0", "end")
             self.editor.configure(state="disabled")
-            self.editor_title.configure(text="Seleziona un prompt da modificare")
-            self.customized_badge.pack_forget()
+            self.editor_title.configure(text=editor_title_text())
+            self._sync_customized_badge(False)
 
             self._editing_system_prompt = False
             self._current_doc_type = None
 
-            self._on_status_update("Tutti i prompt ripristinati", "success")
+            self._on_status_update(reset_status_message(reset_all=True), "success")
+
+    def _sync_customized_badge(self, is_customized: bool) -> None:
+        """Pack or hide the PERSONALIZZATO badge without changing layout."""
+        self.customized_badge.configure(text=customized_badge_text(is_customized))
+        if should_show_customized_badge(is_customized):
+            self.customized_badge.pack(side="left", padx=10)
+        else:
+            self.customized_badge.pack_forget()
 
     def _update_char_count(self) -> None:
         """Update the character count display."""
         content = self.editor.get("1.0", "end-1c")
-        self.char_count.configure(text=f"{len(content):,} caratteri")
+        self.char_count.configure(text=char_count_label(content))

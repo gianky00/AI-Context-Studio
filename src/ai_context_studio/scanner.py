@@ -22,6 +22,7 @@ from .constants import (
     TOKEN_FACTOR,
 )
 from .models import ExistingDoc, FileInfo, GenerationType, ScanResult
+from .path_safety import is_path_inside
 
 logger = logging.getLogger(__name__)
 
@@ -216,7 +217,7 @@ class FastFileScanner:
                 included=True
             ))
 
-        except OSError as e:
+        except (OSError, ValueError) as e:
             logger.debug("Error getting file stats for %s: %s", entry.path, e)
 
     def read_files(
@@ -233,6 +234,10 @@ class FastFileScanner:
         """
         included = [f for f in result.files if f.included]
         total = len(included)
+        included_paths = {f.relative_path for f in included}
+        stale = [key for key in result.content_map if key not in included_paths]
+        for key in stale:
+            del result.content_map[key]
 
         logger.info("Reading %d files", total)
 
@@ -241,8 +246,14 @@ class FastFileScanner:
                 logger.info("File reading cancelled")
                 break
 
+            if not is_path_inside(file_info.path, result.root_path):
+                logger.warning(
+                    "Skipping file outside scan root: %s", file_info.path
+                )
+                continue
+
             content = self._read_file_safe(file_info.path)
-            if content:
+            if content is not None:
                 result.content_map[file_info.relative_path] = content
 
             if progress_callback and idx % 5 == 0:
@@ -271,12 +282,17 @@ class FastFileScanner:
 
         for encoding in encodings:
             try:
-                return path.read_text(encoding=encoding)
+                content = path.read_text(encoding=encoding)
             except UnicodeDecodeError:
                 continue
             except OSError as e:
                 logger.debug("Error reading %s: %s", path, e)
                 return None
+
+            if "\x00" in content:
+                logger.warning("Skipping binary file: %s", path)
+                return None
+            return content
 
         logger.warning("Could not decode file: %s", path)
         return None
@@ -307,11 +323,11 @@ class FastFileScanner:
         root = result.root_path
         logger.info("Detecting existing documentation in: %s", root)
 
-        # Locations to search for docs
+        # Locations to search for docs (do not follow directory symlinks)
         search_paths = [root]
         for folder in DOC_FOLDERS:
             doc_path = root / folder
-            if doc_path.exists() and doc_path.is_dir():
+            if not doc_path.is_symlink() and doc_path.is_dir():
                 search_paths.append(doc_path)
 
         found_docs: dict[str, ExistingDoc] = {}
@@ -338,7 +354,7 @@ class FastFileScanner:
         """
         try:
             for entry in os.scandir(search_path):
-                if not entry.is_file():
+                if not entry.is_file(follow_symlinks=False):
                     continue
 
                 name = entry.name
@@ -397,7 +413,7 @@ class FastFileScanner:
             found_docs[filename] = doc
             logger.debug("Found existing doc: %s (outdated: %s)", rel_path, is_outdated)
 
-        except OSError as e:
+        except (OSError, ValueError) as e:
             logger.debug("Error adding doc %s: %s", entry.path, e)
 
     def _check_if_outdated(self, content: str, filename: str) -> bool:

@@ -3,9 +3,10 @@
 import sys
 from pathlib import Path
 
-# Add src to path
+# Add src to path so the package is importable without installation.
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
-# Start app
 from ai_context_studio.main import main
-main()
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import logging
 import tkinter as tk
+from collections.abc import Iterable, Mapping
+from dataclasses import replace
 from typing import Any
 
 import customtkinter as ctk
@@ -18,6 +20,129 @@ from ..models import FocusArea, ProjectType, SmartPreset
 from .tooltip import add_tooltip
 
 logger = logging.getLogger(__name__)
+
+NOTES_PLACEHOLDER = (
+    "Scrivi qui istruzioni specifiche per l'AI...\n"
+    "Es: Documenta in dettaglio il sistema di caching Redis usato nel progetto."
+)
+
+PREVIEW_NOTES_MAX_LENGTH = 200
+
+GUIDE_STEPS: tuple[tuple[str, str, str, str], ...] = (
+    (
+        "1\uFE0F\u20E3",
+        "Configura API",
+        "Vai alla tab 'Setup' e inserisci la tua Google Gemini API Key.\n"
+        "Non ce l'hai? Ottienila gratis su: https://makersuite.google.com/app/apikey",
+        COLORS['primary']
+    ),
+    (
+        "2\uFE0F\u20E3",
+        "Seleziona Progetto",
+        "Clicca 'Sfoglia' e seleziona la cartella root del tuo progetto.\n"
+        "L'app analizzera' automaticamente tutti i file di codice supportati.\n"
+        "Puoi selezionare/deselezionare i file con il tasto destro del mouse.",
+        COLORS['teal']
+    ),
+    (
+        "3\uFE0F\u20E3",
+        "Genera Documentazione",
+        "Vai alla tab 'Generatore' e seleziona i documenti da creare.\n"
+        "Puoi generare singoli documenti o tutti gli 11 tipi disponibili.\n"
+        "L'app riconosce automaticamente documentazione esistente!",
+        COLORS['success']
+    ),
+)
+
+GUIDE_TIPS: tuple[str, ...] = (
+    "Usa le 'Istruzioni Personalizzate' per guidare l'AI su aspetti specifici",
+    "Seleziona/Deseleziona file multipli nella tabella con tasto destro",
+    "L'app rileva automaticamente i file .md esistenti e li aggiorna",
+    "I documenti vengono salvati nella cartella /docs del progetto",
+    "Ctrl+O apri cartella, Ctrl+G genera tutti, Ctrl+S salva, F1 guida"
+)
+
+
+def project_type_from_name(name: str) -> ProjectType:
+    """Resolve a project-type enum member from its name, defaulting to GENERIC."""
+    try:
+        return ProjectType[name]
+    except KeyError:
+        return ProjectType.GENERIC
+
+
+def focus_areas_from_labels(labels: Iterable[str]) -> list[FocusArea]:
+    """Return FocusArea members matching the given display labels, in order."""
+    lookup = {area.value[1]: area for area in FocusArea}
+    return [lookup[label] for label in labels if label in lookup]
+
+
+def selected_focus_areas(selections: Mapping[FocusArea, Any]) -> list[FocusArea]:
+    """Return focus areas whose mapped value is selected.
+
+    Values may be a Tk ``BooleanVar`` (or any object with ``get()``),
+    or a plain boolean.
+    """
+    selected: list[FocusArea] = []
+    for area, value in selections.items():
+        getter = getattr(value, "get", None)
+        is_on = getter() if callable(getter) else bool(value)
+        if is_on:
+            selected.append(area)
+    return selected
+
+
+def is_notes_placeholder(content: str) -> bool:
+    """Return True if *content* is the notes placeholder, not user text."""
+    return content.startswith("Scrivi qui") or content.startswith("Es:")
+
+
+def _strip_c0_controls(text: str, *, keep: str = "") -> str:
+    """Drop C0 controls and DEL, optionally keeping selected whitespace chars."""
+    return "".join(
+        ch for ch in text
+        if ch in keep or not (ord(ch) < 32 or ord(ch) == 127)
+    )
+
+
+def sanitize_additional_notes(notes: str) -> str:
+    """Strip notes and drop placeholder text so it is not sent as instructions."""
+    cleaned = _strip_c0_controls(notes, keep="\t\n\r")
+    stripped = cleaned.strip()
+    if is_notes_placeholder(stripped):
+        return ""
+    return stripped
+
+
+def build_smart_preset(
+    project_type_name: str,
+    focus_area_labels: Iterable[str],
+    target_audience: str,
+    additional_notes: str,
+) -> SmartPreset:
+    """Build a SmartPreset from widget-collected names, labels, and notes."""
+    return SmartPreset(
+        project_type=project_type_from_name(project_type_name),
+        focus_areas=focus_areas_from_labels(focus_area_labels),
+        target_audience=_strip_c0_controls(target_audience).strip(),
+        additional_notes=sanitize_additional_notes(additional_notes),
+    )
+
+
+def format_preset_preview(
+    preset: SmartPreset,
+    *,
+    notes_max_length: int = PREVIEW_NOTES_MAX_LENGTH,
+) -> str:
+    """Return SmartPreset panel preview text.
+
+    Empty / whitespace notes are omitted. Notes longer than *notes_max_length*
+    are truncated with an ellipsis so the preview box stays readable.
+    """
+    notes = (preset.additional_notes or "").strip()
+    if notes and len(notes) > notes_max_length:
+        notes = notes[:notes_max_length] + "..."
+    return replace(preset, additional_notes=notes).to_prompt_context()
 
 
 class SmartPresetPanel(ctk.CTkFrame):
@@ -253,11 +378,7 @@ class SmartPresetPanel(ctk.CTkFrame):
         )
         self.notes_text.pack(fill="x", padx=12, pady=(0, 12))
 
-        self._notes_placeholder = (
-            "Scrivi qui istruzioni specifiche per l'AI...\n"
-            "Es: Documenta in dettaglio il sistema di caching Redis usato nel progetto."
-        )
-        self.notes_text.insert("1.0", self._notes_placeholder)
+        self.notes_text.insert("1.0", NOTES_PLACEHOLDER)
         self.notes_text.configure(text_color=COLORS['text_muted'])
         self.notes_text.bind("<FocusIn>", self._clear_placeholder)
         self.notes_text.bind("<FocusOut>", self._restore_placeholder)
@@ -285,7 +406,7 @@ class SmartPresetPanel(ctk.CTkFrame):
     def _clear_placeholder(self, event: Any = None) -> None:
         """Clear placeholder text on focus."""
         content = self.notes_text.get("1.0", "end-1c")
-        if content.startswith("Scrivi qui") or content.startswith("Es:"):
+        if is_notes_placeholder(content):
             self.notes_text.delete("1.0", "end")
             self.notes_text.configure(text_color="black")
 
@@ -293,7 +414,7 @@ class SmartPresetPanel(ctk.CTkFrame):
         """Restore placeholder if notes are empty."""
         content = self.notes_text.get("1.0", "end-1c").strip()
         if not content:
-            self.notes_text.insert("1.0", self._notes_placeholder)
+            self.notes_text.insert("1.0", NOTES_PLACEHOLDER)
             self.notes_text.configure(text_color=COLORS['text_muted'])
 
     def _on_preset_change(self) -> None:
@@ -303,7 +424,7 @@ class SmartPresetPanel(ctk.CTkFrame):
     def _update_preview(self) -> None:
         """Update the preview text."""
         preset = self.get_preset()
-        preview = preset.to_prompt_context()
+        preview = format_preset_preview(preset)
 
         self.preview_text.configure(state="normal")
         self.preview_text.delete("1.0", "end")
@@ -317,22 +438,14 @@ class SmartPresetPanel(ctk.CTkFrame):
         Returns:
             SmartPreset with current settings.
         """
-        try:
-            project_type = ProjectType[self.project_type_var.get()]
-        except KeyError:
-            project_type = ProjectType.GENERIC
-
-        focus_areas = [fa for fa, var in self._focus_vars.items() if var.get()]
-
-        notes = self.notes_text.get("1.0", "end-1c").strip()
-        if notes.startswith("Scrivi qui") or notes.startswith("Es:"):
-            notes = ""
-
-        return SmartPreset(
-            project_type=project_type,
-            focus_areas=focus_areas,
-            target_audience=self.audience_combo.get(),
-            additional_notes=notes
+        focus_labels = [
+            fa.value[1] for fa in selected_focus_areas(self._focus_vars)
+        ]
+        return build_smart_preset(
+            self.project_type_var.get(),
+            focus_labels,
+            self.audience_combo.get(),
+            self.notes_text.get("1.0", "end-1c"),
         )
 
 
@@ -378,33 +491,7 @@ class GuidePanel(ctk.CTkFrame):
         steps_frame = ctk.CTkFrame(self, fg_color="transparent")
         steps_frame.pack(fill="both", expand=True, padx=15)
 
-        steps = [
-            (
-                "1\uFE0F\u20E3",
-                "Configura API",
-                "Vai alla tab 'Setup' e inserisci la tua Google Gemini API Key.\n"
-                "Non ce l'hai? Ottienila gratis su: https://makersuite.google.com/app/apikey",
-                COLORS['primary']
-            ),
-            (
-                "2\uFE0F\u20E3",
-                "Seleziona Progetto",
-                "Clicca 'Sfoglia' e seleziona la cartella root del tuo progetto.\n"
-                "L'app analizzera' automaticamente tutti i file di codice supportati.\n"
-                "Puoi selezionare/deselezionare i file con il tasto destro del mouse.",
-                COLORS['teal']
-            ),
-            (
-                "3\uFE0F\u20E3",
-                "Genera Documentazione",
-                "Vai alla tab 'Generatore' e seleziona i documenti da creare.\n"
-                "Puoi generare singoli documenti o tutti gli 11 tipi disponibili.\n"
-                "L'app riconosce automaticamente documentazione esistente!",
-                COLORS['success']
-            ),
-        ]
-
-        for icon, title, desc, color in steps:
+        for icon, title, desc, color in GUIDE_STEPS:
             self._create_step_card(steps_frame, icon, title, desc, color)
 
         # Tips
@@ -462,15 +549,7 @@ class GuidePanel(ctk.CTkFrame):
             font=ctk.CTkFont(size=FONTS['subheader'], weight="bold")
         ).pack(anchor="w", padx=15, pady=(12, 5))
 
-        tips = [
-            "Usa le 'Istruzioni Personalizzate' per guidare l'AI su aspetti specifici",
-            "Seleziona/Deseleziona file multipli nella tabella con tasto destro",
-            "L'app rileva automaticamente i file .md esistenti e li aggiorna",
-            "I documenti vengono salvati nella cartella /docs del progetto",
-            "Ctrl+O apri cartella, Ctrl+G genera tutti, Ctrl+S salva, F1 guida"
-        ]
-
-        for tip in tips:
+        for tip in GUIDE_TIPS:
             ctk.CTkLabel(
                 tips_frame,
                 text=f"\u2022 {tip}",

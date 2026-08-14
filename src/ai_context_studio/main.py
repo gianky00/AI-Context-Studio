@@ -12,7 +12,8 @@ from __future__ import annotations
 import logging
 import sys
 
-from .constants import APP_AUTHOR, APP_NAME, APP_VERSION
+from .constants import APP_AUTHOR, APP_NAME, APP_VERSION, CONFIG_DIR
+from .logging_setup import setup_file_logging
 
 
 def setup_logging(debug: bool = False) -> None:
@@ -34,6 +35,8 @@ def setup_logging(debug: bool = False) -> None:
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("google").setLevel(logging.WARNING)
 
+    setup_file_logging(CONFIG_DIR / "logs", debug=debug)
+
 
 def check_dependencies() -> bool:
     """Check if required dependencies are installed."""
@@ -46,11 +49,10 @@ def check_dependencies() -> bool:
         missing.append("customtkinter")
         logger.error("CustomTkinter not found. Install with: pip install customtkinter")
 
-    try:
-        import google.generativeai  # noqa: F401
-    except ImportError:
-        missing.append("google-generativeai")
-        logger.error("Google Generative AI not found. Install with: pip install google-generativeai")
+    import importlib.util
+    if importlib.util.find_spec("google.genai") is None:
+        missing.append("google-genai")
+        logger.error("Google Gen AI SDK not found. Install with: pip install google-genai")
 
     if missing:
         logger.error("Missing dependencies: %s", ", ".join(missing))
@@ -96,6 +98,9 @@ def main() -> int:
         logger.info("Application closed normally")
         return 0
 
+    except KeyboardInterrupt:
+        logger.info("Application interrupted")
+        return 0
     except Exception as e:
         logger.exception("Fatal error: %s", e)
         return 1

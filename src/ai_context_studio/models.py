@@ -16,7 +16,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Optional
 
 from .constants import COLORS
 
@@ -334,10 +333,19 @@ class SmartPreset:
             focus_str = ", ".join(f.value[1] for f in self.focus_areas)
             parts.append(f"FOCUS PRINCIPALE: {focus_str}")
 
-        parts.append(f"TARGET AUDIENCE: {self.target_audience}")
+        def _drop_c0(text: str, *, keep: str = "") -> str:
+            return "".join(
+                ch for ch in text
+                if ch in keep or not (ord(ch) < 32 or ord(ch) == 127)
+            )
 
-        if self.additional_notes.strip():
-            parts.append(f"NOTE SPECIFICHE: {self.additional_notes}")
+        audience = _drop_c0(self.target_audience)
+        if audience.strip():
+            parts.append(f"TARGET AUDIENCE: {audience.replace('===', '≡≡≡')}")
+
+        notes = _drop_c0(self.additional_notes, keep="\t\n\r")
+        if notes.strip():
+            parts.append(f"NOTE SPECIFICHE: {notes.replace('===', '≡≡≡')}")
 
         return "\n".join(parts)
 
@@ -355,6 +363,7 @@ class GenerationResult:
         tokens_used: Estimated tokens in output
         generation_time: Time taken in seconds
         retries: Number of retry attempts made
+        retryable: Whether the caller should retry this failure
     """
     success: bool
     doc_type: GenerationType
@@ -363,3 +372,4 @@ class GenerationResult:
     tokens_used: int = 0
     generation_time: float = 0.0
     retries: int = 0
+    retryable: bool = True
