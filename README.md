@@ -1,64 +1,80 @@
-# AI Context Studio
+# AI Context Studio — Knowledge Base & Architecture Generator per Agenti AI
 
-Applicazione desktop per scansionare un progetto locale e generare knowledge base Markdown destinate ad agenti AI (Claude, Copilot, Cursor e simili).
+![Python](https://img.shields.io/badge/Python-3.9+-3776AB?style=flat-square&logo=python&logoColor=white)
+![GUI](https://img.shields.io/badge/GUI-CustomTkinter-0284C7?style=flat-square)
+![AI SDK](https://img.shields.io/badge/AI-Google%20GenAI%20SDK-4285F4?style=flat-square&logo=google&logoColor=white)
+![Quality](https://img.shields.io/badge/Quality-Pytest%20%7C%20MyPy%20%7C%20Ruff-0F172A?style=flat-square)
 
-## Requisiti
+**AI Context Studio** è un'applicazione desktop progettata per analizzare repository software locali, redigere automaticamente informazioni sensibili e generare **Knowledge Base strutturate in Markdown** e **diagrammi architetturali Mermaid** ottimizzati per agenti di sviluppo AI (Claude, Cursor, GitHub Copilot, Gemini).
 
-- Python 3.9 o superiore
-- Una API key Google Gemini
-- SDK Google Gen AI (`google-genai`, incluso nelle dipendenze del progetto)
+---
 
-## Installazione
+## Funzionalità Principali
 
-Dalla root del repository:
+- **Scansione Intelligente del Repository (`scanner.py`):** Esplorazione selettiva dell'albero dei file con filtri `.gitignore`, controllo di sicurezza sui percorsi (`path_safety.py`) ed esclusione automatica di artefatti binari o directory di build.
+- **Redazione Automatica dei Segreti (`secret_redaction.py`):** Rilevamento e mascheramento preventivo di chiavi API, token e credenziali prima dell'invio del contesto ai modelli LLM.
+- **Stima Token & Controllo Costi (`token_estimator.py`):** Calcolo preventivo del consumo di token e storico dettagliato delle sessioni di generazione (`cost_history_window.py`).
+- **Prompt Engine Modulare (`prompt_engine.py`):** Template ingegnerizzati e personalizzabili per produrre documentazione architetturale, specifiche di dominio e contesti operativi.
+- **Visualizzatore Mermaid Integrato (`visualizer_tab.py`):** Rendering interattivo dei diagrammi di architettura direttamente nell'interfaccia desktop tramite `pywebview` / `tkinterweb` con sanitizzazione automatica della sintassi.
+- **Gestione Sicura Credenziali:** Salvataggio delle API key tramite il Credential Store di sistema (`keyring`) o cifratura simmetrica Fernet (`cryptography`).
+
+---
+
+## Stack Tecnologico
+
+| Componente | Tecnologia |
+| :--- | :--- |
+| **Linguaggio** | Python 3.9+ |
+| **Interfaccia Desktop** | CustomTkinter, TkinterWeb, PyWebView |
+| **Integrazione LLM** | Google GenAI SDK (`google-genai`) |
+| **Sicurezza Locale** | OS Keyring (`keyring`), Cifratura Fernet (`cryptography`) |
+| **Testing & Linting** | Pytest, MyPy, Ruff, Pre-commit |
+
+---
+
+## Installazione e Avvio
+
+### Setup in modalità sviluppo
 
 ```powershell
-pip install -e .
-```
-
-Solo dipendenze (non installa il pacchetto né il comando `ai-context-studio`):
-
-```powershell
-pip install -r requirements.txt
-```
-
-Per i test:
-
-```powershell
+# Installazione del pacchetto in modalità editable con dipendenze di sviluppo
 pip install -e ".[dev]"
-python -m pytest tests -q
-python -m mypy
-```
 
-`python -m mypy` controlla i moduli core (non-UI) elencati in `[tool.mypy]` `files` in `pyproject.toml`.
-
-Hook pre-commit (incluso in `[dev]`): `pre-commit install`.
-
-## Avvio
-
-```powershell
+# Avvio dell'applicazione
+ai-context-studio
+# oppure:
 python -m ai_context_studio
 ```
 
-Dopo `pip install -e .` è disponibile anche il comando `ai-context-studio`.
+Su Windows è possibile avviare direttamente l'interfaccia senza console tramite `Avvia_AI_Context_Studio.bat` (`launcher.pyw`).
 
-Su Windows si può usare `Avvia_AI_Context_Studio.bat`, che lancia `launcher.pyw` con `pythonw`.
+### Esecuzione Test e Controlli Qualità
 
-Flag di debug: `--debug` oppure `-d`.
+```powershell
+python -m pytest tests -q
+python -m mypy
+python -m ruff check src/ tests/
+```
 
-## Configurazione
+---
 
-La configurazione persistente vive in `~/.ai_context_studio/` (`%USERPROFILE%\.ai_context_studio` su Windows):
+## Struttura del Progetto
 
-- `config.json` — impostazioni e API key (cifrata se `cryptography` è disponibile)
-- `.keyfile` — chiave Fernet per la cifratura
-- `models_cache.json` — elenco modelli Gemini in cache
-- `custom_prompts.json` — prompt personalizzati
-- `cost_history.json` — storico stime di costo
-- `logs/` — log applicazione
+```text
+AI-Context-Studio/
+├── src/ai_context_studio/
+│   ├── app.py                  # Entry point GUI e coordinamento tab
+│   ├── api_client.py           # Client asincrono/sincrono per modelli GenAI
+│   ├── scanner.py              # Scansione file system e filtri
+│   ├── secret_redaction.py     # Sanitizzazione credenziali e segreti
+│   ├── token_estimator.py      # Calcolo token e stima costi
+│   ├── prompt_engine.py        # Costruzione prompt strutturati
+│   └── ui/                     # Componenti grafici (File Tree, Preview, Visualizer)
+├── tests/                      # Suite di test unitari e di integrazione
+└── pyproject.toml              # Configurazione pacchetto, Ruff, MyPy e Pytest
+```
 
-L'API key Gemini si inserisce dalla tab **Setup** dell'applicazione. Non va committata nel repository.
+---
 
-Le chiavi sono salvate preferibilmente nel credential store del sistema operativo.
-
-I documenti generati vengono salvati in `{progetto}/docs/`.
+## Autore
+Sviluppato da **Giancarlo Allegretti** — Rilasciato sotto licenza MIT.
